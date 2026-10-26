@@ -51,6 +51,9 @@ if (flags.includes('--seed')) {
     const r = await fetch('/api/photos', { method: 'POST', headers: { 'x-wc': '1' }, body: fd }); if (!r.ok) throw new Error('photo ' + r.status + ' ' + await r.text());
   });
   await page.click('#lockbtn'); // lock parent mode for kid-view tests
+} else if (await page.isVisible('text=Enter PIN')) {
+  await page.click('text=Enter PIN'); await typePin(PIN); await page.waitForSelector('.rail');
+  await page.click('#lockbtn');
 }
 await page.goto(base + '/#home'); await page.reload(); await page.waitForSelector('.kidcard', { timeout: 15000 }); await page.waitForTimeout(2500);
 await page.screenshot({ path: `${out}-home-1920.png` });
@@ -67,6 +70,10 @@ console.log('settings locked:', await page.isVisible('.lockbar'));
 // slideshow + night dim sanity
 await page.goto(base + '/#photos'); await page.waitForTimeout(700);
 if (await page.isVisible('text=▶ Slideshow')) { await page.click('text=▶ Slideshow'); await page.waitForTimeout(2500); await page.screenshot({ path: `${out}-slideshow-1920.png` }); }
+if (await page.isVisible('#slideshow')) { await page.mouse.click(900, 500); await page.waitForTimeout(400); }
+await page.click('#lockbtn'); await typePin(PIN); await page.waitForTimeout(500);
+await page.goto(base + '/#settings'); await page.waitForSelector('.settings'); await page.waitForTimeout(500); await page.screenshot({ path: `${out}-settings-parent-1920.png` });
+await page.click('#lockbtn'); await page.waitForTimeout(500);
 // phone
 const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, timezoneId: 'America/Chicago', storageState: await ctx.storageState() });
 const pp = await phone.newPage(); pp.on('pageerror', (e) => errors.push('phone pageerror: ' + e.message));

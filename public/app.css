@@ -138,14 +138,15 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .dayv .nowline { position: absolute; left: 0; right: 0; height: 2px; background: var(--bad); z-index: 2; }
 .dayv .nowline::before { content: ''; position: absolute; left: -6px; top: -5px; width: 12px; height: 12px; border-radius: 50%; background: var(--bad); }
 
-.agenda .ad { display: grid; grid-template-columns: 6.5rem 1fr; gap: .8rem; padding: .7rem 0; border-bottom: 1px solid var(--line); }
+.agenda .ad { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .8rem; padding: .7rem 0; border-bottom: 1px solid var(--line); }
 .agenda .ad .dl b { display: block; font-size: 1.9rem; line-height: 1; }
 .agenda .ad .dl span { color: var(--muted); font-weight: 600; font-size: .9rem; text-transform: uppercase; letter-spacing: .05em; }
 .agenda .ad.today .dl b { color: var(--bad); }
 .agenda .items { display: flex; flex-direction: column; gap: .35rem; }
 .agenda .chip { font-size: 1.05rem; padding: .45rem .6rem; }
 .agenda .chip .t { min-width: 5.5rem; font-size: .9em; }
-.agenda .loc { color: var(--muted); font-size: .85em; margin-left: .4rem; }
+.agenda .loc { color: var(--muted); font-size: .85em; margin-left: auto; padding-left: .4rem; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.agenda .chip .n { flex: 0 1 auto; }
 
 /* ---------- chores / kids ---------- */
 .kids { display: flex; flex-direction: column; gap: var(--gap); }
@@ -295,7 +296,17 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 
 #toast { position: fixed; left: 50%; bottom: 2rem; transform: translateX(-50%) translateY(150%); background: var(--ink); color: var(--bg); padding: .9rem 1.4rem; border-radius: 999px; font-weight: 600; z-index: 90; transition: transform .25s ease, opacity .25s, visibility .25s; opacity: 0; visibility: hidden; max-width: 90vw; text-align: center; }
 #toast.on { transform: translateX(-50%) translateY(0); opacity: 1; visibility: visible; }
-@media (max-width: 899px) { #toast { bottom: 5rem; } }
+@media (max-width: 899px) {
+  #toast { bottom: 5rem; }
+  .calbar h2 { flex-basis: 100%; font-size: 1.4rem; margin-bottom: .2rem; }
+  .calbar .seg { margin-left: auto; }
+  .agenda .ad { grid-template-columns: 3.6rem minmax(0, 1fr); gap: .5rem; }
+  .agenda .ad .dl b { font-size: 1.5rem; }
+  .agenda .ad .dl span { font-size: .7rem; }
+  .agenda .chip { font-size: .98rem; }
+  .agenda .chip .t { min-width: 4.2rem; }
+  .agenda .loc { display: none; }
+}
 
 #confetti { position: fixed; inset: 0; pointer-events: none; z-index: 70; overflow: hidden; }
 #confetti span { position: absolute; font-size: 2rem; font-family: var(--emoji); animation: pop 1.4s cubic-bezier(.2, .7, .3, 1) forwards; }

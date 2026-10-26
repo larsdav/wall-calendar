@@ -473,6 +473,8 @@ function renderView() {
   const views = { home: homeView, calendar: () => h('div', { class: 'card', style: { height: '100%', minHeight: '30rem' } }, calendarPanel()), chores: choresView, rewards: rewardsView, photos: photosView, settings: settingsView };
   v.replaceChildren((views[S.view] || homeView)());
   v.scrollTop = st;
+  const body = v.querySelector('.calbody');
+  if (body && S.cal.view === 'day' && !body.dataset.scrolled) { const t = body.querySelector('.nowline') || body.querySelector('.ev'); if (t) body.scrollTop = Math.max(0, t.getBoundingClientRect().top - body.getBoundingClientRect().top - body.clientHeight / 3); }
 }
 
 // ---------------- home ----------------
@@ -708,7 +710,7 @@ function agendaView(s, e, today) {
   for (let n = s; n < e; n++) {
     const list = map.get(n).filter((ev) => ev.a || n !== today || ev.e > Date.now() - 30 * 60e3);
     if (!list.length && n !== today) continue;
-    const label = n === today ? 'Today' : n === today + 1 ? 'Tomorrow' : DOW[weekday(n)];
+    const label = n === today ? 'Today' : n === today + 1 ? (isPhone() ? 'Tmrw' : 'Tomorrow') : DOW[weekday(n)];
     const c = civil(n);
     out.append(h('div', { class: 'ad' + (n === today ? ' today' : '') }, h('div', { class: 'dl' }, h('span', null, label), h('b', null, c.d), h('span', null, MON[c.m - 1].slice(0, 3))),
       h('div', { class: 'items' }, list.length ? list.map((ev) => chip(ev, n, { loc: true })) : h('div', { style: { color: 'var(--muted)', paddingTop: '.6rem' } }, 'Nothing else today'))));
