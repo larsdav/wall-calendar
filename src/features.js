@@ -1,18 +1,20 @@
 // Family features added after v1: lists, meal plan (and later routines, countdowns, albums, family events).
 import { json, err, all, first, run, J, body } from './util.js';
-import { cleanText, cleanEmoji, splitItems, newIngredients, cleanMeal } from './logic.js';
+import { cleanText, cleanEmoji, splitItems, newIngredients, cleanMeal, isDue, tickStep } from './logic.js';
+import { dayKey } from './tz.js';
 
 const MAX_LISTS = 12, MAX_ITEMS = 300;
 const dayAdd = (k, n) => new Date(Date.parse(k + 'T00:00:00Z') + n * 86400e3).toISOString().slice(0, 10);
 
 export async function featureState(db, s, today) {
   const recent = Date.now() - 2 * 86400e3;
-  const [lists, items, meals] = await Promise.all([
+  const [lists, items, meals, progress] = await Promise.all([
     all(db, 'SELECT id, name, emoji, kind, sort FROM lists ORDER BY sort, id'),
     all(db, 'SELECT id, list_id, text, done, done_at, source, created_at FROM list_items WHERE done = 0 OR done_at >= ? ORDER BY done, sort, id', recent),
     all(db, 'SELECT day, slot, title, emoji, ingredients, note FROM meals WHERE day >= ? AND day <= ? ORDER BY day', dayAdd(today, -14), dayAdd(today, 42)),
+    all(db, 'SELECT task_id, person_id, day, done FROM routine_progress WHERE day = ?', today),
   ]);
-  return { lists, list_items: items.map((i) => ({ ...i, done: !!i.done })), meals: meals.map((m) => ({ ...m, ingredients: J(m.ingredients, []) })) };
+  return { routine_progress: progress.map((r) => ({ ...r, done: J(r.done, []) })), lists, list_items: items.map((i) => ({ ...i, done: !!i.done })), meals: meals.map((m) => ({ ...m, ingredients: J(m.ingredients, []) })) };
 }
 
 async function addItems(db, listId, texts, source) {
@@ -25,9 +27,26 @@ async function addItems(db, listId, texts, source) {
 }
 
 /** Returns a Response for feature routes, or null when the path isn't ours. Device auth is already checked. */
-export async function featureApi({ req, db, path, m, parent }) {
+export async function featureApi({ req, db, path, m, s, parent }) {
   const needParent = () => (parent ? null : err(403, 'parent'));
   let pm;
+
+  // ----- routines: kids tick steps (today only, no PIN); finishing the routine goes through /complete like any chore
+  if (path === '/routine/step' && m === 'POST') {
+    const b = await body(req);
+    const task = await first(db, "SELECT * FROM tasks WHERE id = ? AND kind = 'routine'", +b.task_id);
+    const person = await first(db, 'SELECT id FROM people WHERE id = ?', +b.person_id);
+    if (!task || !person) return err(404, 'Not found');
+    const t = { ...task, days: J(task.days, []), assignees: J(task.assignees, []), steps: J(task.steps, []) };
+    const today = dayKey(Date.now(), s.tz);
+    if (!t.assignees.includes(person.id) || !isDue(t, today)) return err(400, 'Not due today');
+    const step = Math.round(+b.step);
+    if (!(step >= 0 && step < t.steps.length)) return err(400, 'No such step');
+    const cur = await first(db, 'SELECT done FROM routine_progress WHERE task_id = ? AND person_id = ? AND day = ?', t.id, person.id, today);
+    const done = tickStep(J(cur && cur.done, []), step, !!b.done, t.steps.length);
+    await run(db, 'INSERT INTO routine_progress (task_id, person_id, day, done, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (task_id, person_id, day) DO UPDATE SET done = excluded.done, updated_at = excluded.updated_at', t.id, person.id, today, JSON.stringify(done), Date.now());
+    return json({ ok: true, done, all: done.length === t.steps.length });
+  }
 
   // ----- lists: anyone on a connected screen can add / tick / clear items; parents manage the lists themselves
   if (path === '/lists' && m === 'POST') {

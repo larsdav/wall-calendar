@@ -397,3 +397,46 @@ ul.ing { margin: .4rem 0 0; padding-left: 1.3rem; columns: 2; font-size: 1.05rem
   .mealsv .section-title { white-space: nowrap; }
   .meal-tools .chips button { padding: .45rem .8rem; }
 }
+
+/* ---------- routines + kid pages ---------- */
+.kidlink { display: flex; align-items: center; gap: .7rem; flex: 1; min-width: 0; text-align: left; border-radius: var(--r-sm); }
+.kidlink:active { transform: scale(.98); }
+.task.rtask:not(.done) .ck { color: var(--muted); font-size: 1.5rem; }
+.routine { display: flex; flex-direction: column; gap: .6rem; }
+.rhead { display: flex; align-items: center; gap: .7rem; }
+.rhead .rte { font-size: 2.4rem; font-family: var(--emoji); }
+.rhead b { font-size: 1.45rem; display: block; }
+.rhead small { color: var(--muted); font-weight: 600; }
+.routine .rbar { height: .7rem; }
+.steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .5rem; }
+.step { display: flex; align-items: center; gap: .7rem; min-height: 4.2rem; padding: .5rem .8rem; border-radius: var(--r-sm); background: var(--panel2); text-align: left; font-size: 1.2rem; font-weight: 600; transition: background .2s, transform .1s; }
+.step:active { transform: scale(.97); }
+.step .sn { width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 3px solid var(--line); display: grid; place-items: center; flex: none; font-size: 1rem; color: var(--muted); }
+.step .se { font-size: 1.8rem; font-family: var(--emoji); }
+.step .stt { flex: 1; min-width: 0; }
+.step.on { background: color-mix(in srgb, var(--c) 20%, var(--panel2)); }
+.step.on .sn { background: var(--c); border-color: var(--c); color: #fff; font-size: 1.3rem; }
+.step.on .stt { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 2px; }
+.sheet:has(.routine-sheet) { width: min(56rem, 100%); }
+.kv-col > .card { padding: 1rem 1.1rem; }
+.routine-sheet .steps { grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+.kv-head { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; padding: 1rem 1.2rem; border-top: 8px solid var(--c); margin-bottom: var(--gap); }
+.kv-head .nm h2 { margin: 0; font-size: 2rem; }
+.kv-head .nm small { color: var(--muted); font-weight: 600; font-size: 1rem; }
+.avatar.big { width: 5rem; height: 5rem; font-size: 3rem; }
+.stars.big { font-size: 1.8rem; padding: .3rem 1rem; }
+.kidswitch { display: flex; align-items: center; gap: .5rem; padding: .35rem .9rem .35rem .35rem; border-radius: 999px; background: var(--panel2); font-weight: 700; font-size: 1.05rem; }
+.kidswitch .avatar { width: 2.6rem; height: 2.6rem; font-size: 1.5rem; }
+.kidpick { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: var(--gap); }
+.kv-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--gap); align-items: start; }
+.kv-col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+.kv-col .section-title { margin: 0; }
+.kidview .kidcard { border-top: 0; }
+@media (max-width: 899px) {
+  .kv-grid { grid-template-columns: 1fr; }
+  .kv-head { gap: .6rem; }
+  .kv-head .kidswitch { display: none; }
+  .avatar.big { width: 3.6rem; height: 3.6rem; font-size: 2.2rem; }
+  .kv-head .nm h2 { font-size: 1.5rem; }
+  .steps, .routine-sheet .steps { grid-template-columns: 1fr; }
+}

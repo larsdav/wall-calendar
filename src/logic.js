@@ -2,7 +2,7 @@
 import { parseDayKey, dayNum, weekday } from './tz.js';
 
 export const RECURS = ['daily', 'weekdays', 'weekly', 'once'];
-export const KINDS = ['chore', 'habit', 'activity'];
+export const KINDS = ['chore', 'habit', 'activity', 'routine'];
 
 /** Is a task due on a given civil day ('YYYY-MM-DD')? */
 export function isDue(task, day) {
@@ -125,7 +125,9 @@ export function cleanTask(b, personIds) {
     assignees: Array.isArray(b.assignees) ? b.assignees.map(Number).filter((id) => personIds.includes(id)) : [],
     part: ['morning', 'afternoon', 'evening', 'any'].includes(b.part) ? b.part : 'any',
   };
+  t.steps = t.kind === 'routine' ? cleanSteps(b.steps) : [];
   if (!t.title) return { error: 'Give it a name' };
+  if (t.kind === 'routine' && !t.steps.length) return { error: 'Add at least one step' };
   if (t.recur === 'weekly' && !t.days.length) return { error: 'Pick at least one day of the week' };
   if (t.recur === 'once' && !t.date) return { error: 'Pick a date' };
   if (!t.assignees.length) return { error: 'Assign it to at least one person' };
@@ -172,4 +174,28 @@ export function cleanMeal(b) {
   if (!day || !slot) return { error: 'Pick a day and meal' };
   const ingredients = Array.isArray(b.ingredients) ? b.ingredients.map((x) => cleanText(x, 80)).filter(Boolean).slice(0, 40) : splitItems(b.ingredients);
   return { meal: { day, slot, title: cleanText(b.title, 80), emoji: b.emoji ? cleanEmoji(b.emoji) : '', ingredients, note: cleanText(b.note, 200) } };
+}
+
+const LEAD_EMOJI = /^((?:\p{Extended_Pictographic}|\p{Regional_Indicator})(?:\uFE0F|\u200D|\p{Extended_Pictographic}|\p{Emoji_Modifier})*)\s*/u;
+/** Routine steps: array of strings ("🪥 Brush teeth") or {t, e}; returns up to 15 {t, e}. */
+export function cleanSteps(steps) {
+  if (typeof steps === 'string') steps = steps.split(/\n/);
+  if (!Array.isArray(steps)) return [];
+  const out = [];
+  for (const raw of steps) {
+    let t = typeof raw === 'string' ? raw : raw && raw.t, e = raw && typeof raw === 'object' ? raw.e : '';
+    t = cleanText(String(t || '').replace(/^\s*[-*•\d.)]+\s*/, ''), 60);
+    const m = LEAD_EMOJI.exec(t);
+    if (m && !e) { e = m[1]; t = t.slice(m[0].length).trim(); }
+    if (!t) continue;
+    out.push({ t, e: e ? [...String(e)].slice(0, 4).join('') : '' });
+    if (out.length >= 15) break;
+  }
+  return out;
+}
+/** Tick or untick one step; returns the sorted list of done step indexes. */
+export function tickStep(done, step, on, count) {
+  const set = new Set((Array.isArray(done) ? done : []).filter((i) => Number.isInteger(i) && i >= 0 && i < count));
+  if (on) set.add(step); else set.delete(step);
+  return [...set].sort((a, b) => a - b);
 }

@@ -204,7 +204,7 @@ function confirmBox(title, text, okLabel = 'OK', danger = false) {
 const PALETTE = ['#E76F51', '#F4A261', '#E9C46A', '#2A9D8F', '#5B8DEF', '#8E7DFF', '#D16BA5', '#3BB273', '#EF476F', '#118AB2', '#8D6E63', '#607D8B'];
 const EMOJI = {
   people: ['🙂', '😀', '😎', '🤓', '🥳', '👧', '👦', '👩', '👨', '👶', '🧒', '👸', '🤴', '🦸', '🧚', '🐶', '🐱', '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🦄', '🐙', '🦖', '🐢', '🐝', '🦋', '🌻', '⚽', '🏀', '🎸', '🚀', '🌈', '⭐'],
-  tasks: ['🛏️', '🌙', '🪥', '🛁', '👕', '🧺', '🧹', '🍽️', '🗑️', '🐕', '🐈', '🌱', '📚', '✏️', '🎹', '🎻', '⚽', '🏃', '🥦', '💧', '🧸', '🎒', '🚗', '🙏', '😊', '🤝', '📵', '✅', '⏰', '🧼'],
+  tasks: ['🛏️', '🌅', '🌙', '🪥', '🛁', '👕', '🧺', '🧹', '🍽️', '🗑️', '🐕', '🐈', '🌱', '📚', '✏️', '🎹', '🎻', '⚽', '🏃', '🥦', '💧', '🧸', '🎒', '🚗', '🙏', '😊', '🤝', '📵', '✅', '⏰', '🧼'],
   rewards: ['🎁', '🍦', '🍕', '🍩', '🎬', '🎮', '📱', '🛝', '🏊', '🎳', '🧁', '🍿', '📖', '🧸', '🎨', '🛍️', '💵', '🌟', '🏆', '🎟️', '🍔', '🌮', '⏰', '🚲'],
 };
 function field(label, control, help) { return h('div', { class: 'field' }, h('label', null, label), control, help ? h('div', { class: 'help' }, help) : null); }
@@ -477,6 +477,7 @@ function syncBox() {
 function renderView() {
   const v = $('#view'); if (!v || !S.state) return;
   const st = v.scrollTop;
+  if (S.view.startsWith('kid/')) { v.replaceChildren(kidView(+S.view.split('/')[1])); v.scrollTop = st; return; }
   const views = { home: homeView, calendar: () => h('div', { class: 'card', style: { height: '100%', minHeight: '30rem' } }, calendarPanel()), chores: choresView, rewards: rewardsView, lists: listsView, meals: mealsView, photos: photosView, settings: settingsView };
   v.replaceChildren((views[S.view] || homeView)());
   v.scrollTop = st;
@@ -508,27 +509,30 @@ function setupCard() {
   if (!set().weather) steps.push(['🌤️', 'Choose weather location', open(() => editWeather())]);
   return h('div', { class: 'card sbox' }, h('h3', null, E('✨'), 'Finish setting up'), h('div', { class: 'setup-list' }, steps.map(([e, t, f]) => h('button', { onclick: f }, E(e), t, h('span', { class: 'grow' }), '›'))));
 }
-function kidCard(b, { showAll = false } = {}) {
+function kidCard(b, opts = {}) {
+  const showAll = !!opts.showAll;
   const p = b.person, items = b.items;
   const bal = S.state.balances[p.id] || 0;
   const allDone = items.length && b.doneCount === items.length;
   const card = h('div', { class: 'card kidcard', style: { '--c': p.color } },
-    h('div', { class: 'kidhead' }, h('div', { class: 'avatar' }, p.emoji),
-      h('div', { class: 'nm' }, p.name, h('small', null, items.length ? `${b.doneCount} of ${items.length} done today` : 'Nothing due today')),
-      h('div', { class: 'stars', 'data-stars': p.id, title: 'Stars' }, E('⭐'), h('span', null, bal))));
-  if (!items.length) card.append(h('div', { class: 'alldone' }, 'Free day! 🎈'));
+    h('div', { class: 'kidhead' }, opts.head === false ? null : h('button', { class: 'kidlink', 'aria-label': `Open ${p.name}'s page`, onclick: () => go('kid/' + p.id) }, h('div', { class: 'avatar' }, p.emoji),
+      h('div', { class: 'nm' }, p.name, h('small', null, items.length ? `${b.doneCount} of ${items.length} done today` : 'Nothing due today'))),
+      opts.head === false ? h('div', { class: 'nm' }, opts.title || 'Chores', h('small', null, items.length ? `${b.doneCount} of ${items.length} done` : '')) : null,
+      opts.head === false ? null : h('div', { class: 'stars', 'data-stars': p.id, title: 'Stars' }, E('⭐'), h('span', null, bal))));
+  if (!items.length) card.append(h('div', { class: 'alldone' }, opts.empty || 'Free day! 🎈'));
   else if (allDone && !showAll) card.append(h('div', { class: 'alldone' }, E('🎉'), ' All done today!'));
   if (!allDone || showAll) for (const it of items) {
-    const t = it.task;
-    card.append(h('button', { class: 'task ' + (it.status === 'todo' ? '' : it.status), onclick: (e) => tapTask(p, t, it, e.currentTarget) },
+    const t = it.task, rt = t.kind === 'routine', nd = rt ? progOf(t.id, p.id).length : 0;
+    card.append(h('button', { class: 'task ' + (it.status === 'todo' ? '' : it.status) + (rt ? ' rtask' : ''), 'data-task': t.id, onclick: (e) => tapTask(p, t, it, e.currentTarget) },
       h('span', { class: 'te' }, t.emoji),
-      h('span', { class: 'tt' }, t.title, it.status === 'pending' ? h('small', null, 'Waiting for a parent') : t.part !== 'any' ? h('small', null, t.part[0].toUpperCase() + t.part.slice(1)) : null),
+      h('span', { class: 'tt' }, t.title, it.status === 'pending' ? h('small', null, 'Waiting for a parent') : rt ? h('small', null, `Routine · ${nd} of ${t.steps.length} steps`) : t.part !== 'any' ? h('small', null, t.part[0].toUpperCase() + t.part.slice(1)) : null),
       t.stars ? h('span', { class: 'sv' }, '+' + t.stars + ' ⭐') : null,
-      h('span', { class: 'ck' }, it.status === 'done' ? '✓' : it.status === 'pending' ? '⏳' : '')));
+      h('span', { class: 'ck', style: rt && it.status === 'todo' && nd ? { background: `conic-gradient(var(--c) ${Math.round(nd / t.steps.length * 360)}deg, transparent 0)` } : null }, it.status === 'done' ? '✓' : it.status === 'pending' ? '⏳' : rt ? '›' : '')));
   }
   return card;
 }
 async function tapTask(person, task, it, el) {
+  if (task.kind === 'routine') return openRoutine(person, task);
   try {
     if (it.status === 'todo') {
       const willBe = set().approval && !S.status.parent ? 'pending' : 'done';
@@ -563,6 +567,91 @@ function celebrate(el, stars, person) {
   const pop = h('div', { class: 'celebrate' }, h('div', { class: 'big' }, stars ? '⭐'.repeat(Math.min(stars, 5)) : '🎉'), h('b', null, `${praise[Math.floor(Math.random() * praise.length)]}, ${person.name}!`), stars ? h('div', null, `+${stars} star${stars > 1 ? 's' : ''}`) : null);
   document.body.append(pop); setTimeout(() => pop.remove(), 1600);
 }
+// ---------------- routines + kid pages ----------------
+const progOf = (tid, pid) => ((S.state.routine_progress || []).find((r) => r.task_id === tid && r.person_id === pid) || {}).done || [];
+function setProg(tid, pid, done) {
+  const rp = (S.state.routine_progress ||= []);
+  const r = rp.find((x) => x.task_id === tid && x.person_id === pid);
+  if (r) r.done = done; else rp.push({ task_id: tid, person_id: pid, day: todayKey(), done });
+}
+const statusOf = (tid, pid) => { const c = S.state.completions.find((x) => x.task_id === tid && x.person_id === pid && x.day === todayKey()); return c ? c.status : 'todo'; };
+function routinePanel(p, t, onChange) {
+  const done = progOf(t.id, p.id), st = statusOf(t.id, p.id), pct = Math.round((done.length / t.steps.length) * 100);
+  return h('div', { class: 'routine ' + st, style: { '--c': p.color }, 'data-routine': t.id },
+    h('div', { class: 'rhead' }, h('span', { class: 'rte' }, t.emoji), h('div', { class: 'grow' }, h('b', null, t.title),
+      h('small', null, `${done.length} of ${t.steps.length} steps${t.stars ? ` · +${t.stars} ⭐ when done` : ''}`))),
+    h('div', { class: 'rbar' }, h('i', { style: { width: pct + '%', background: p.color } })),
+    h('div', { class: 'steps' }, t.steps.map((x, i) => h('button', { class: 'step' + (done.includes(i) ? ' on' : ''), onclick: (e) => tapStep(p, t, i, onChange, e.currentTarget) },
+      h('span', { class: 'sn' }, done.includes(i) ? '✓' : String(i + 1)), x.e ? h('span', { class: 'se' }, x.e) : null, h('span', { class: 'stt' }, x.t)))),
+    st === 'done' ? h('div', { class: 'alldone' }, E('🎉'), ' All done!') : st === 'pending' ? h('div', { class: 'alldone' }, E('⏳'), ' Waiting for a parent') : null);
+}
+async function tapStep(p, t, i, onChange, el) {
+  const done = progOf(t.id, p.id), on = !done.includes(i), st = statusOf(t.id, p.id);
+  try {
+    if (!on && st !== 'todo') {
+      const ok = await confirmBox(`Undo “${t.title}”?`, st === 'done' && t.stars ? `This takes back ${t.stars} star${t.stars > 1 ? 's' : ''} from ${p.name}.` : null, 'Undo');
+      if (!ok) return;
+      await api('POST', '/complete', { task_id: t.id, person_id: p.id, undo: true });
+      S.state.completions = S.state.completions.filter((c) => !(c.task_id === t.id && c.person_id === p.id && c.day === todayKey()));
+    }
+    setProg(t.id, p.id, on ? [...done, i].sort((a, b) => a - b) : done.filter((x) => x !== i)); onChange();
+    const r = await api('POST', '/routine/step', { task_id: t.id, person_id: p.id, step: i, done: on });
+    setProg(t.id, p.id, r.done);
+    if (r.all && statusOf(t.id, p.id) === 'todo') {
+      const c = await api('POST', '/complete', { task_id: t.id, person_id: p.id });
+      S.state.completions.push({ id: c.completion_id, task_id: t.id, person_id: p.id, day: todayKey(), status: c.status, stars: t.stars });
+      if (c.status === 'done') { celebrate(document.body, t.stars, p); bumpStars(p.id, t.stars); } else toast(`Great job! A parent will approve “${t.title}”.`);
+    }
+    onChange();
+  } catch (e) { handle(e); }
+  refresh();
+}
+function openRoutine(p, t) {
+  const box = h('div');
+  const paint = () => { box.replaceChildren(routinePanel(p, t, paint)); renderView(); };
+  modal(h('div', { class: 'routine-sheet' }, h('div', { class: 'kidhead' }, h('div', { class: 'avatar', style: { '--c': p.color } }, p.emoji), h('div', { class: 'nm' }, p.name)), box), { cancel: true });
+  box.replaceChildren(routinePanel(p, t, paint));
+}
+function kidView(id) {
+  const p = personById(id);
+  if (!p) { setTimeout(() => go('home')); return h('div'); }
+  const today = todayKey();
+  const board = todayBoard(S.state.tasks, S.state.completions, [p], today)[0];
+  const routines = board.items.filter((it) => it.task.kind === 'routine'), others = board.items.filter((it) => it.task.kind !== 'routine');
+  const bal = S.state.balances[p.id] || 0;
+  const kids = kidsOf().filter((k) => k.id !== p.id);
+  const out = h('div', { class: 'kidview', style: { '--c': p.color } });
+  out.append(h('div', { class: 'card kv-head' },
+    h('button', { class: 'btn small', onclick: () => go('home') }, '‹ Everyone'),
+    h('div', { class: 'avatar big' }, p.emoji), h('div', { class: 'nm' }, h('h2', null, p.name), h('small', null, board.items.length ? `${board.doneCount} of ${board.items.length} done today` : 'Nothing due today')),
+    h('div', { class: 'stars big', 'data-stars': p.id }, E('⭐'), h('span', null, bal)), h('span', { class: 'grow' }),
+    kids.map((k) => h('button', { class: 'kidswitch', 'aria-label': `Switch to ${k.name}`, style: { '--c': k.color }, onclick: () => go('kid/' + k.id) }, h('div', { class: 'avatar' }, k.emoji), k.name))));
+  const left = h('div', { class: 'kv-col' }), right = h('div', { class: 'kv-col' });
+  left.append(h('div', { class: 'section-title' }, E('🌅'), 'Routines'));
+  if (routines.length) for (const it of routines) left.append(h('div', { class: 'card' }, routinePanel(p, it.task, () => renderView())));
+  else left.append(h('div', { class: 'card empty-note' }, 'No routines today. Parents can add a morning or bedtime routine on the Chores page.'));
+  right.append(h('div', { class: 'section-title' }, E('✅'), 'Chores and habits'));
+  right.append(kidCard({ person: p, items: others, doneCount: others.filter((i) => i.status === 'done').length }, { showAll: true, head: false, title: 'Today', empty: 'Nothing else today 🎈' }));
+  const rws = [];
+  for (const r of S.state.rewards.filter((x) => x.active)) {
+    if (r.progress.scope === 'family') rws.push(miniRow(r, null, r.progress.have));
+    else { const k = r.progress.kids.find((x) => x.person_id === p.id); if (k) rws.push(miniRow(r, p, k.have)); }
+  }
+  right.append(h('div', { class: 'section-title' }, E('🎁'), 'Rewards'));
+  right.append(h('div', { class: 'card mini-rewards' }, rws.length ? rws.sort((a, b) => b.pct - a.pct).map((r) => r.el) : h('p', { class: 'empty-note' }, 'No rewards for ' + p.name + ' yet.')));
+  const hist = S.state.ledger.filter((l) => l.person_id === p.id).slice(0, 6);
+  if (hist.length) {
+    right.append(h('div', { class: 'section-title' }, E('📜'), 'Recent stars'));
+    right.append(h('div', { class: 'card hist' }, hist.map((l) => h('div', { class: 'hr' }, h('div', { class: 'grow' }, h('b', null, l.note || l.kind), h('br'), h('small', { style: { color: 'var(--muted)' } }, `${fmt({ weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(l.created_at))} ${timeStr(l.created_at, true)}`)),
+      h('span', { class: 'delta ' + (l.delta >= 0 ? 'plus' : 'minus') }, (l.delta > 0 ? '+' : '') + l.delta + ' ⭐')))));
+  }
+  out.append(h('div', { class: 'kv-grid' }, left, right));
+  return out;
+}
+const ROUTINE_PRESETS = {
+  morning: { title: 'Morning routine', emoji: '🌅', part: 'morning', steps: '🛏️ Make bed\n👕 Get dressed\n🥣 Eat breakfast\n🪥 Brush teeth\n💇 Brush hair\n🎒 Pack backpack' },
+  bedtime: { title: 'Bedtime routine', emoji: '🌙', part: 'evening', steps: '🧸 Tidy toys\n🛁 Bath or shower\n🩳 Pajamas on\n🪥 Brush teeth\n📚 Read a book\n💡 Lights out' },
+};
 function rewardsMini() {
   const rows = [];
   for (const r of S.state.rewards.filter((x) => x.active)) {
@@ -747,7 +836,9 @@ function choresView() {
     })));
   }
   out.append(h('div', { class: 'section-title' }, E('✅'), 'Today', h('span', { class: 'grow' }),
+    h('button', { class: 'btn small', onclick: async () => { if (await needParent()) editTask(null, { kind: 'routine' }); } }, '+ Add routine'),
     h('button', { class: 'btn small', onclick: async () => { if (await needParent()) editTask(null); } }, '+ Add chore or habit')));
+  if (kids.length) out.append(h('div', { class: 'kidpick' }, kids.map((k) => h('button', { class: 'kidswitch', style: { '--c': k.color }, onclick: () => go('kid/' + k.id) }, h('div', { class: 'avatar' }, k.emoji), `${k.name}'s page`))));
   if (!kids.length) out.append(h('div', { class: 'card empty-state' }, h('div', { class: 'big' }, '🧒'), h('p', null, 'Add your kids in Settings to start tracking chores and habits.'), h('button', { class: 'btn primary', onclick: async () => { if (await needParent()) { go('settings'); editPerson(null); } } }, 'Add a kid')));
   else out.append(h('div', { class: 'chores-grid' }, todayBoard(S.state.tasks, S.state.completions, kids, todayKey()).map((b) => kidCard(b, { showAll: true }))));
 
@@ -1149,19 +1240,29 @@ function editCalendar(c) {
     onDelete: c ? async () => confirmBox(`Remove ${c.name}?`, 'This only removes it from the wall calendar.', 'Remove', true).then(async (ok) => { if (ok) await api('DELETE', `/calendars/${c.id}`); return ok; }) : null,
   });
 }
-function editTask(t) {
+function editTask(t, preset = {}) {
   const kids = kidsOf(), everyone = kids.length ? kids : S.state.people;
-  const f = t ? { ...t, days: [...t.days], assignees: [...t.assignees], active: !!t.active } : { title: '', emoji: '🛏️', kind: 'chore', stars: 1, recur: 'daily', days: [], date: todayKey(), assignees: everyone.map((p) => p.id), part: 'any', active: true };
-  let daysWrap, dateWrap;
-  const syncVis = () => { daysWrap.hidden = f.recur !== 'weekly'; dateWrap.hidden = f.recur !== 'once'; };
-  formSheet(t ? 'Edit' : 'New chore, habit or activity', () => {
+  const stepsText = (x) => (x.steps || []).map((st) => (st.e ? st.e + ' ' : '') + st.t).join('\n');
+  const f = t ? { ...t, days: [...t.days], assignees: [...t.assignees], active: !!t.active, steps: stepsText(t) } : { title: '', emoji: '🛏️', kind: 'chore', stars: 1, recur: 'daily', days: [], date: todayKey(), assignees: everyone.map((p) => p.id), part: 'any', active: true, steps: '', ...preset };
+  if (!t && f.kind === 'routine') Object.assign(f, { ...ROUTINE_PRESETS.morning, stars: 3 });
+  let daysWrap, dateWrap, stepsWrap, stepsArea;
+  const syncVis = () => { daysWrap.hidden = f.recur !== 'weekly'; dateWrap.hidden = f.recur !== 'once'; stepsWrap.hidden = f.kind !== 'routine'; };
+  formSheet(t ? 'Edit' : f.kind === 'routine' ? 'New routine' : 'New chore, habit or activity', () => {
+    stepsArea = h('textarea', { rows: 7, placeholder: '🪥 Brush teeth\n👕 Get dressed', oninput: (e) => { f.steps = e.target.value; } });
+    stepsArea.value = f.steps || '';
+    const usePreset = (k) => { const pr = ROUTINE_PRESETS[k]; f.steps = pr.steps; stepsArea.value = pr.steps; if (!t) { f.title = pr.title; f.part = pr.part; f.emoji = pr.emoji; const ti = stepsWrap.closest('.sheet').querySelector('input[type=text]'); if (ti) ti.value = pr.title; } };
+    stepsWrap = field('Steps (one per line, emoji optional)', h('div', null, h('div', { class: 'chips', style: { marginBottom: '.5rem' } },
+      h('button', { type: 'button', onclick: () => usePreset('morning') }, E('🌅'), 'Morning example'), h('button', { type: 'button', onclick: () => usePreset('bedtime') }, E('🌙'), 'Bedtime example')), stepsArea),
+      'Kids tick each step; the stars are earned when every step is done.');
     const recur = chipsInput(f, 'recur', [{ value: 'daily', label: 'Every day' }, { value: 'weekdays', label: 'School days' }, { value: 'weekly', label: 'Some days' }, { value: 'once', label: 'Just once' }]);
     recur.addEventListener('change', syncVis);
     daysWrap = field('Which days', chipsInput(f, 'days', DOW.map((d, i) => ({ value: i, label: d })), { multi: true }));
     dateWrap = field('Date', h('input', { type: 'date', value: f.date || todayKey(), onchange: (e) => (f.date = e.target.value) }));
+    const kindChips = chipsInput(f, 'kind', [{ value: 'chore', label: 'Chore', emoji: '🧹' }, { value: 'habit', label: 'Habit', emoji: '🌙' }, { value: 'activity', label: 'Activity', emoji: '⚽' }, { value: 'routine', label: 'Routine', emoji: '🌅' }]);
+    kindChips.addEventListener('change', syncVis);
     const el = h('div', null,
       field('Name', textInput(f, 'title', { maxlength: 60, placeholder: 'Make bed, Good bedtime, Piano practice…' })),
-      field('Type', chipsInput(f, 'kind', [{ value: 'chore', label: 'Chore', emoji: '🧹' }, { value: 'habit', label: 'Habit', emoji: '🌙' }, { value: 'activity', label: 'Activity', emoji: '⚽' }])),
+      field('Type', kindChips), stepsWrap,
       field('Icon', emojiInput(f, 'emoji', 'tasks')),
       field('Stars earned', stepper(f, 'stars', 0, 20)),
       field('How often', recur), daysWrap, dateWrap,

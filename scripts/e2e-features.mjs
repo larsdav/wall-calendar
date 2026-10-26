@@ -40,6 +40,8 @@ if (!st.people.length) {
   st = await state();
 }
 const kids = st.people.filter((p) => p.role === 'kid');
+if (!st.tasks.some((t) => t.kind !== 'routine')) await api(page, 'POST', '/tasks', { title: 'Feed the dog', emoji: '🐕', kind: 'chore', stars: 2, recur: 'daily', assignees: kids.map((k) => k.id) });
+if (!st.rewards.length) await api(page, 'POST', '/rewards', { name: 'Ice cream trip', emoji: '🍦', cost: 10, scope: 'kid', person_ids: kids.map((k) => k.id) });
 const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, timezoneId: 'America/Chicago', storageState: await ctx.storageState() });
 const phone = await phoneCtx.newPage(); watch(phone, 'phone');
 const today = st.today;
@@ -134,6 +136,88 @@ if (steps.includes(1)) {
   await phone.keyboard.press('Escape');
   const overflow = await page.evaluate(() => { const r = document.querySelector('.rail'); return r.scrollHeight <= r.clientHeight + 1; });
   check('wall nav rail fits at 1080p', overflow);
+}
+
+// ---------- step 2: routines + kid pages ----------
+if (steps.includes(2)) {
+  await lockState(page, false);
+  st = await state();
+  for (const t of st.tasks.filter((t) => t.kind === 'routine')) await api(page, 'DELETE', `/tasks/${t.id}`);
+  await api(page, 'PUT', '/settings', { approval: false });
+  const [emma, leo] = kids;
+  await open(page, 'chores', '.chores-grid');
+  await page.click('button:has-text("+ Add routine")');
+  await page.waitForSelector('.sheet h2:has-text("New routine")');
+  check('new routine form starts from the morning example', (await page.inputValue('.sheet textarea')).includes('Make bed'));
+  await page.click('.sheet button:has-text("Bedtime example")');
+  check('bedtime example fills steps and name', (await page.inputValue('.sheet textarea')).includes('Pajamas') && (await page.inputValue('.sheet input[type=text]')) === 'Bedtime routine');
+  await page.click(`.sheet .field:has(label:text-is("Who")) .chips button:has-text("${leo.name}")`); // leave only Emma (+ parents unticked by default)
+  await page.click('.sheet .btn.primary:has-text("Save")');
+  await page.waitForSelector('.sheet', { state: 'detached', timeout: 10000 });
+  st = await state();
+  const bed = st.tasks.find((t) => t.kind === 'routine' && t.title === 'Bedtime routine');
+  check('routine saved with 6 steps for Emma only', bed && bed.steps.length === 6 && bed.assignees.join() === String(emma.id) && bed.steps[0].e === '🧸', bed ? JSON.stringify(bed.steps[0]) + ' ' + bed.assignees : 'missing');
+  const before = st.balances[emma.id] || 0;
+  await lockState(page, true);
+  await open(page, 'home', '.kidcard');
+  check('kid card shows routine progress', await page.isVisible(`.kidcard .task.rtask[data-task="${bed.id}"]:has-text("0 of 6 steps")`));
+  await page.click(`.kidcard .task.rtask[data-task="${bed.id}"]`);
+  await page.waitForSelector('.routine-sheet .step');
+  const stepsEls = await page.$$('.routine-sheet .step');
+  for (let i = 0; i < 3; i++) { await page.click(`.routine-sheet .step >> nth=${i}`); await page.waitForTimeout(350); }
+  await page.waitForTimeout(1200);
+  await shot(page, 'routine-1920');
+  const nErr = errors.length;
+  const early = await page.evaluate(async (b) => (await fetch('/api/complete', { method: 'POST', headers: { 'x-wc': '1', 'content-type': 'application/json' }, body: JSON.stringify(b) })).status, { task_id: bed.id, person_id: emma.id });
+  await page.waitForTimeout(300); errors.splice(nErr); // the expected 400 above is logged by Chrome
+  check('kid cannot finish a routine with steps left (server)', early === 400, early);
+  for (let i = 3; i < stepsEls.length; i++) { await page.click(`.routine-sheet .step >> nth=${i}`); await page.waitForTimeout(350); }
+  await page.waitForTimeout(2500);
+  st = await state();
+  check('finishing every step awards the stars once', (st.balances[emma.id] || 0) === before + bed.stars && st.completions.some((c) => c.task_id === bed.id && c.status === 'done'), `${before} -> ${st.balances[emma.id]}`);
+  check('routine sheet shows All done', await page.isVisible('.routine-sheet .alldone:has-text("All done")'));
+  await page.click('.routine-sheet .step >> nth=5');
+  await page.click('.sheet .btn.primary:has-text("Undo")');
+  await page.waitForTimeout(2500);
+  st = await state();
+  check('unticking a step on a finished routine takes the stars back', (st.balances[emma.id] || 0) === before && !st.completions.some((c) => c.task_id === bed.id) && st.routine_progress.find((r) => r.task_id === bed.id).done.length === 5);
+  await page.click('.routine-sheet .step >> nth=5'); await page.waitForTimeout(2500);
+  await page.keyboard.press('Escape');
+  // kid page
+  await open(page, 'home', '.kidcard');
+  await page.click(`.kidcard .kidlink[aria-label="Open ${emma.name}'s page"]`);
+  await page.waitForSelector('.kidview .routine');
+  check('tapping a kid opens their page', (await page.evaluate(() => location.hash)) === `#kid/${emma.id}`);
+  check('kid page shows their routine done, chores and rewards', await page.isVisible('.kidview .routine .alldone') && await page.isVisible('.kidview .kidcard .task') && await page.isVisible('.kidview .mini-rewards'));
+  st = await state();
+  check('kid page star count matches balance', (await page.textContent('.kv-head .stars > span:last-child')) === String(st.balances[emma.id] || 0));
+  await shot(page, 'kid-1920');
+  await page.click(`.kidswitch[aria-label="Switch to ${leo.name}"]`);
+  await page.waitForSelector('.kidview .kv-head h2:has-text("' + leo.name + '")');
+  check('switch between kids', !(await page.isVisible('.kidview .routine')) && await page.isVisible('.kidview .empty-note:has-text("No routines today")'));
+  // approval flow on a routine
+  await lockState(page, false);
+  await api(page, 'PUT', '/settings', { approval: true });
+  const qr = await api(page, 'POST', '/tasks', { title: 'Quick tidy', emoji: '🧹', kind: 'routine', stars: 2, recur: 'daily', assignees: [leo.id], steps: '🧸 Toys away\n👟 Shoes away' });
+  await lockState(page, true);
+  const leoBefore = (await state()).balances[leo.id] || 0;
+  await open(page, 'kid/' + leo.id, '.kidview .routine');
+  await page.click('.kidview .routine .step >> nth=0'); await page.waitForTimeout(400);
+  await page.click('.kidview .routine .step >> nth=1'); await page.waitForTimeout(2500);
+  st = await state();
+  check('with approval on, a finished routine waits for a parent', st.completions.some((c) => c.task_id === qr.id && c.status === 'pending') && (st.balances[leo.id] || 0) === leoBefore && await page.isVisible('.kidview .routine .alldone:has-text("Waiting")'));
+  await open(page, 'chores', '.chores-grid');
+  await page.click('.hist .hr:has-text("Quick tidy") button:has-text("Approve")');
+  await page.waitForSelector('.pin .pad'); await typePin(page); await page.waitForTimeout(2500);
+  st = await state();
+  check('parent approves the routine and stars are added', (st.balances[leo.id] || 0) === leoBefore + 2, `${leoBefore} -> ${st.balances[leo.id]}`);
+  await api(page, 'PUT', '/settings', { approval: false });
+  await lockState(page, true);
+  await open(phone, 'kid/' + emma.id, '.kidview .routine'); await shot(phone, 'kid-390', true);
+  await open(phone, 'chores', '.kidcard');
+  await phone.click(`.kidcard .task.rtask[data-task="${bed.id}"]`); await phone.waitForSelector('.routine-sheet .step'); await phone.waitForTimeout(700); await shot(phone, 'routine-390');
+  await phone.keyboard.press('Escape');
+  await open(page, 'chores', '.chores-grid'); await shot(page, 'chores-1920');
 }
 
 const extra = process.env.E2E_EXTRA ? await import(process.env.E2E_EXTRA) : null;

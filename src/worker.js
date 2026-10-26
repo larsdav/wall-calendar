@@ -74,7 +74,7 @@ async function getSettings(db) {
 }
 const putSetting = (db, key, value) => run(db, 'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(value));
 
-const taskRow = (t) => ({ ...t, days: J(t.days, []), assignees: J(t.assignees, []), active: !!t.active });
+const taskRow = (t) => ({ ...t, days: J(t.days, []), assignees: J(t.assignees, []), steps: J(t.steps, []), active: !!t.active });
 const rewardRow = (r) => ({ ...r, person_ids: J(r.person_ids, []), task_ids: J(r.task_ids, []), active: !!r.active });
 
 // ---------- sessions ----------
@@ -284,6 +284,10 @@ async function api(req, env, ctx, url) {
       return json({ ok: true, status: 'todo' });
     }
     if (existing) return json({ ok: true, status: existing.status });
+    if (t.kind === 'routine' && !parent) {
+      const pr = await first(db, 'SELECT done FROM routine_progress WHERE task_id = ? AND person_id = ? AND day = ?', t.id, person.id, day);
+      if (J(pr && pr.done, []).length < t.steps.length) return err(400, 'Finish all the steps first');
+    }
     const status = s.approval && !parent ? 'pending' : 'done';
     const r = await run(db, 'INSERT INTO completions (task_id, person_id, day, status, stars, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?)', t.id, person.id, day, status, t.stars, now, status === 'done' ? now : null);
     const cid = r.meta.last_row_id;
@@ -346,6 +350,7 @@ async function api(req, env, ctx, url) {
       db.prepare('DELETE FROM people WHERE id = ?').bind(id),
       db.prepare('DELETE FROM completions WHERE person_id = ?').bind(id),
       db.prepare('DELETE FROM ledger WHERE person_id = ?').bind(id),
+      db.prepare('DELETE FROM routine_progress WHERE person_id = ?').bind(id),
       db.prepare('UPDATE calendars SET person_id = NULL WHERE person_id = ?').bind(id),
     ]);
     // drop from task/reward assignee lists
@@ -392,17 +397,18 @@ async function api(req, env, ctx, url) {
     const ids = (await all(db, 'SELECT id FROM people')).map((p) => p.id);
     const { task: t, error } = cleanTask(b, ids);
     if (error) return err(400, error);
-    const args = [t.title, t.emoji, t.kind, t.stars, t.recur, JSON.stringify(t.days), t.date, JSON.stringify(t.assignees), t.part, b.active === false ? 0 : 1];
+    const args = [t.title, t.emoji, t.kind, t.stars, t.recur, JSON.stringify(t.days), t.date, JSON.stringify(t.assignees), t.part, b.active === false ? 0 : 1, JSON.stringify(t.steps)];
     if (path === '/tasks') {
-      const r = await run(db, 'INSERT INTO tasks (title, emoji, kind, stars, recur, days, date, assignees, part, active, sort, start_day, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', ...args, Math.round(+b.sort || 0), null, Date.now());
+      // ids are never reused, so kept history (done completions, ledger) can't attach to a new task
+      const r = await run(db, 'INSERT INTO tasks (id, title, emoji, kind, stars, recur, days, date, assignees, part, active, steps, sort, start_day, created_at) VALUES ((SELECT MAX(x) + 1 FROM (SELECT COALESCE(MAX(id), 0) AS x FROM tasks UNION ALL SELECT COALESCE(MAX(task_id), 0) FROM completions UNION ALL SELECT COALESCE(MAX(task_id), 0) FROM ledger)), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', ...args, Math.round(+b.sort || 0), null, Date.now());
       return json({ ok: true, id: r.meta.last_row_id });
     }
-    await run(db, 'UPDATE tasks SET title = ?, emoji = ?, kind = ?, stars = ?, recur = ?, days = ?, date = ?, assignees = ?, part = ?, active = ?, sort = ? WHERE id = ?', ...args, Math.round(+b.sort || 0), +pm[1]);
+    await run(db, 'UPDATE tasks SET title = ?, emoji = ?, kind = ?, stars = ?, recur = ?, days = ?, date = ?, assignees = ?, part = ?, active = ?, steps = ?, sort = ? WHERE id = ?', ...args, Math.round(+b.sort || 0), +pm[1]);
     return json({ ok: true });
   }
   pm = /^\/tasks\/(\d+)$/.exec(path);
   if (pm && m === 'DELETE') { // history (ledger) is kept; open completions go
-    await db.batch([db.prepare('DELETE FROM tasks WHERE id = ?').bind(+pm[1]), db.prepare("DELETE FROM completions WHERE task_id = ? AND status = 'pending'").bind(+pm[1])]);
+    await db.batch([db.prepare('DELETE FROM tasks WHERE id = ?').bind(+pm[1]), db.prepare('DELETE FROM routine_progress WHERE task_id = ?').bind(+pm[1]), db.prepare("DELETE FROM completions WHERE task_id = ? AND status = 'pending'").bind(+pm[1])]);
     return json({ ok: true });
   }
   pm = /^\/completions\/(\d+)\/(approve|reject)$/.exec(path);
@@ -435,7 +441,7 @@ async function api(req, env, ctx, url) {
     const { reward: r, error } = cleanReward(b, pids, tids);
     if (error) return err(400, error);
     const args = [r.name, r.description, r.emoji, r.cost, r.scope, JSON.stringify(r.person_ids), JSON.stringify(r.task_ids), b.active === false ? 0 : 1];
-    if (path === '/rewards') { const x = await run(db, 'INSERT INTO rewards (name, description, emoji, cost, scope, person_ids, task_ids, active, sort, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)', ...args, Date.now()); return json({ ok: true, id: x.meta.last_row_id }); }
+    if (path === '/rewards') { const x = await run(db, 'INSERT INTO rewards (id, name, description, emoji, cost, scope, person_ids, task_ids, active, sort, created_at) VALUES ((SELECT MAX(x) + 1 FROM (SELECT COALESCE(MAX(id), 0) AS x FROM rewards UNION ALL SELECT COALESCE(MAX(reward_id), 0) FROM redemptions UNION ALL SELECT COALESCE(MAX(reward_id), 0) FROM ledger)), ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)', ...args, Date.now()); return json({ ok: true, id: x.meta.last_row_id }); }
     await run(db, 'UPDATE rewards SET name = ?, description = ?, emoji = ?, cost = ?, scope = ?, person_ids = ?, task_ids = ?, active = ? WHERE id = ?', ...args, +pm[1]);
     return json({ ok: true });
   }
