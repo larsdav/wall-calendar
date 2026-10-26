@@ -1,0 +1,17 @@
+{
+  "name": "wall-calendar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Family wall calendar kiosk: calendars, chores, stars, rewards, photos, weather (Cloudflare Worker + D1)",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && wrangler dev",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.64.1",
+    "wrangler": "^4.86.0"
+  }
+}
