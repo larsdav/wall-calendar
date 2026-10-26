@@ -4,7 +4,7 @@ import { expandIcs, normalizeFeedUrl } from './ics.js';
 import { dayKey, validTz } from './tz.js';
 import { json, err, all, first, run, J, body } from './util.js';
 import { featureApi, featureState } from './features.js';
-import { balances, rewardProgress, checkRedeem, isDue, cleanTask, cleanReward, cleanText, cleanEmoji, cleanMealSlots, COLOR_RE } from './logic.js';
+import { balances, rewardProgress, checkRedeem, isDue, cleanTask, cleanReward, cleanText, cleanEmoji, cleanMealSlots, cleanIds, COLOR_RE } from './logic.js';
 
 const DEV_COOKIE = '__Host-wc-dev';
 const PAR_COOKIE = '__Host-wc-par';
@@ -20,7 +20,7 @@ const enc = new TextEncoder();
 const DEFAULTS = {
   family_name: 'Our Family', tz: 'America/Chicago', theme: 'auto', night_start: '21:00', night_end: '06:30',
   night_dim: 55, idle_minutes: 5, slide_seconds: 12, week_start: 0, clock24: false, default_view: 'week',
-  units: 'F', weather: null, approval: false, drift: true, meal_slots: ['dinner'],
+  units: 'F', weather: null, approval: false, drift: true, meal_slots: ['dinner'], slideshow_albums: [],
 };
 const SETTING_KEYS = Object.keys(DEFAULTS);
 
@@ -318,6 +318,7 @@ async function api(req, env, ctx, url) {
     if ('default_view' in b && ['month', 'week', 'day', 'agenda'].includes(b.default_view)) next.default_view = b.default_view;
     if ('units' in b && ['F', 'C'].includes(b.units)) next.units = b.units;
     if ('meal_slots' in b) next.meal_slots = cleanMealSlots(b.meal_slots);
+    if ('slideshow_albums' in b) next.slideshow_albums = cleanIds(b.slideshow_albums, (await all(db, 'SELECT id FROM albums')).map((a) => a.id));
     if ('weather' in b) {
       const w = b.weather;
       next.weather = w && Number.isFinite(+w.lat) && Number.isFinite(+w.lon) && Math.abs(+w.lat) <= 90 && Math.abs(+w.lon) <= 180
@@ -351,6 +352,7 @@ async function api(req, env, ctx, url) {
       db.prepare('DELETE FROM completions WHERE person_id = ?').bind(id),
       db.prepare('DELETE FROM ledger WHERE person_id = ?').bind(id),
       db.prepare('DELETE FROM routine_progress WHERE person_id = ?').bind(id),
+      db.prepare('UPDATE countdowns SET person_id = NULL WHERE person_id = ?').bind(id),
       db.prepare('UPDATE calendars SET person_id = NULL WHERE person_id = ?').bind(id),
     ]);
     // drop from task/reward assignee lists
@@ -475,10 +477,12 @@ async function api(req, env, ctx, url) {
     if (photo.size > MAX_PHOTO || thumb.size > MAX_THUMB) return err(413, 'Photo is too large after resizing');
     const bytes = await photo.arrayBuffer(), tb = await thumb.arrayBuffer();
     const r = await run(db, 'INSERT INTO photos (mime, w, h, size, bytes, thumb, caption, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', photo.type, +form.get('w') || null, +form.get('h') || null, bytes.byteLength, bytes, tb, cleanText(form.get('caption'), 80), Date.now());
+    const aid = +form.get('album_id');
+    if (aid && (await first(db, 'SELECT id FROM albums WHERE id = ?', aid))) await run(db, 'INSERT OR IGNORE INTO photo_albums (photo_id, album_id) VALUES (?, ?)', r.meta.last_row_id, aid);
     return json({ ok: true, id: r.meta.last_row_id });
   }
   pm = /^\/photos\/(\d+)$/.exec(path);
-  if (pm && m === 'DELETE') { await run(db, 'DELETE FROM photos WHERE id = ?', +pm[1]); return json({ ok: true }); }
+  if (pm && m === 'DELETE') { await db.batch([db.prepare('DELETE FROM photos WHERE id = ?').bind(+pm[1]), db.prepare('DELETE FROM photo_albums WHERE photo_id = ?').bind(+pm[1])]); return json({ ok: true }); }
 
   if (path === '/sync' && m === 'POST') return json({ ok: true, results: await syncAll(env, { force: true }) });
   return err(404, 'Not found');

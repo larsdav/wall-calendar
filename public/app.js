@@ -1,6 +1,6 @@
 // Family wall calendar — front end (vanilla JS, no build step).
 import { dayNum, fromDayNum, weekday, ymd, numFromKey, dayKeyFromNum, partsInTz } from './lib/tz.js';
-import { todayBoard } from './lib/logic.js';
+import { todayBoard, upcomingCountdowns } from './lib/logic.js';
 
 // ---------------- tiny DOM helper ----------------
 function h(tag, attrs, ...kids) {
@@ -24,7 +24,7 @@ const LS = { state: 'wc.state', events: 'wc.events', weather: 'wc.weather', hidd
 const S = {
   status: null, state: null, events: [], evRange: null, weather: null,
   view: (location.hash || '#home').slice(1) || 'home',
-  cal: { view: null, anchor: null }, hidden: new Set(JSON.parse(localStorage.getItem(LS.hidden) || '[]')),
+  cal: { view: null, anchor: null }, calPerson: +localStorage.getItem('wc.calPerson') || null, album: null, hidden: new Set(JSON.parse(localStorage.getItem(LS.hidden) || '[]')),
   offline: false, lastOk: 0, lastEventsOk: 0, modalOpen: 0,
 };
 const TZ = () => (S.state && S.state.settings.tz) || 'America/Chicago';
@@ -352,8 +352,16 @@ function drift() {
 }
 
 let slideTimer = null, slideIdx = 0;
-function startSlideshow() {
-  const photos = S.state && S.state.photos;
+const albumIdsOf = (pid) => (S.state.photo_albums || []).filter((r) => r[0] === pid).map((r) => r[1]);
+const photosIn = (aid) => (aid ? S.state.photos.filter((p) => albumIdsOf(p.id).includes(aid)) : S.state.photos);
+function slideshowPhotos() {
+  const want = (set().slideshow_albums || []).filter((a) => (S.state.albums || []).some((x) => x.id === a));
+  if (!want.length) return S.state.photos;
+  const ps = S.state.photos.filter((p) => albumIdsOf(p.id).some((a) => want.includes(a)));
+  return ps.length ? ps : S.state.photos;
+}
+function startSlideshow(list, startAt) {
+  const photos = list || (S.state && slideshowPhotos());
   if (!photos || !photos.length) return;
   const ss = $('#slideshow'); ss.hidden = false; ss.replaceChildren();
   const bg = h('img', { class: 'bg', alt: '' }), fg = h('img', { alt: '' }), fg2 = h('img', { alt: '' });
@@ -361,7 +369,7 @@ function startSlideshow() {
   ss.append(bg, fg, fg2, ov);
   let which = 0;
   const show = () => {
-    const ps = S.state.photos; if (!ps.length) return stopSlideshow();
+    const ps = photos.filter((p) => S.state.photos.includes(p) || S.state.photos.some((x) => x.id === p.id)); if (!ps.length) return stopSlideshow();
     slideIdx = (slideIdx + 1) % ps.length;
     const src = `/api/photos/${ps[slideIdx].id}`;
     const img = which ? fg2 : fg, other = which ? fg : fg2; which = 1 - which;
@@ -371,7 +379,7 @@ function startSlideshow() {
     ov.replaceChildren(h('div', { class: 't' }, timeStr(Date.now())), h('div', { class: 'd' }, fmt({ weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())),
       nx ? h('div', { class: 'nx' }, 'Next: ', nx.a ? nx.t : `${timeStr(nx.s, true)} · ${nx.t}`) : null);
   };
-  slideIdx = Math.floor(Math.random() * photos.length);
+  slideIdx = (startAt ?? Math.floor(Math.random() * photos.length)) - 1;
   show();
   slideTimer = setInterval(show, Math.max(4, set().slide_seconds) * 1000);
 }
@@ -494,6 +502,7 @@ function homeView() {
   const needsSetup = !S.state.people.length || !S.state.calendars.length || !set().weather;
   const side = h('div', { class: 'side' },
     needsSetup ? setupCard() : null,
+    countdownsMini(),
     mealsMini(),
     kids.length ? h('div', { class: 'kids' }, todayBoard(S.state.tasks, S.state.completions, kids, todayKey()).map((b) => kidCard(b))) : null,
     listMini(),
@@ -652,6 +661,43 @@ const ROUTINE_PRESETS = {
   morning: { title: 'Morning routine', emoji: '🌅', part: 'morning', steps: '🛏️ Make bed\n👕 Get dressed\n🥣 Eat breakfast\n🪥 Brush teeth\n💇 Brush hair\n🎒 Pack backpack' },
   bedtime: { title: 'Bedtime routine', emoji: '🌙', part: 'evening', steps: '🧸 Tidy toys\n🛁 Bath or shower\n🩳 Pajamas on\n🪥 Brush teeth\n📚 Read a book\n💡 Lights out' },
 };
+// ---------------- countdowns ----------------
+EMOJI.countdowns = ['🎉', '🎂', '✈️', '🏖️', '🎄', '🎃', '🦃', '🐰', '🏕️', '🎢', '🏫', '🎓', '💍', '👶', '⚽', '🎭', '🚗', '🏔️', '🎁', '❤️'];
+function cdLabel(c) {
+  if (c.days === 0) return 'Today!';
+  if (c.days === 1) return 'Tomorrow';
+  return c.days < 0 ? 'Done' : `${c.days}`;
+}
+function cdRow(c) {
+  const p = c.person_id ? personById(c.person_id) : null, d = civil(numFromKey(c.next));
+  return h('button', { class: 'cd' + (c.days === 0 ? ' today' : '') + (c.days === 1 ? ' word' : '') + (c.days < 0 ? ' past' : ''), style: p ? { '--c': p.color } : null, 'data-cd': c.id, onclick: async () => { if (await needParent()) editCountdown(c); } },
+    h('span', { class: 'cde' }, c.emoji),
+    h('span', { class: 'cdt' }, c.title, h('small', null, `${DOW[weekday(numFromKey(c.next))]}, ${MON[d.m - 1].slice(0, 3)} ${d.d}${d.y !== +todayKey().slice(0, 4) ? ' ' + d.y : ''}${p ? ' · ' + p.name : ''}${c.yearly ? ' · every year' : ''}`)),
+    h('span', { class: 'cdn' }, cdLabel(c), c.days > 1 ? h('small', null, 'days') : null));
+}
+function countdownsMini() {
+  const list = upcomingCountdowns(S.state.countdowns || [], todayKey());
+  const up = list.filter((c) => c.days >= 0), past = list.length - up.length;
+  const add = h('button', { class: 'btn small', onclick: async () => { if (await needParent()) editCountdown(null); } }, '+ Add');
+  return h('div', { class: 'card mini-cd' }, h('div', { class: 'section-title', style: { margin: '0 0 .3rem', fontSize: '1.15rem' } }, E('⏳'), 'Countdowns', h('span', { class: 'grow' }),
+    list.length > 4 ? h('button', { class: 'btn small', onclick: () => allCountdowns() }, 'All') : null, add),
+    up.length ? up.slice(0, 4).map(cdRow) : h('p', { class: 'empty-note' }, past ? 'Nothing coming up.' : 'Count down to birthdays, trips and holidays.'));
+}
+function allCountdowns() {
+  modal(h('div', null, h('h2', null, 'Countdowns'), h('div', { class: 'mini-cd' }, upcomingCountdowns(S.state.countdowns, todayKey()).map(cdRow))), { cancel: true });
+}
+function editCountdown(c) {
+  const f = c ? { title: c.title, emoji: c.emoji, date: c.date, yearly: !!c.yearly, person_id: c.person_id || 0 } : { title: '', emoji: '🎉', date: '', yearly: false, person_id: 0 };
+  formSheet(c ? 'Edit countdown' : 'New countdown', () => h('div', null,
+    field('What', textInput(f, 'title', { maxlength: 50, placeholder: "Disney trip, Emma's birthday…" })),
+    field('Date', h('input', { type: 'date', value: f.date, onchange: (e) => (f.date = e.target.value), oninput: (e) => (f.date = e.target.value) }), 'For birthdays, any year works; tick “every year”.'),
+    field('Repeats', toggleInput(f, 'yearly', 'Every year (birthdays, holidays)')),
+    field('Icon', emojiInput(f, 'emoji', 'countdowns')),
+    S.state.people.length ? field('Whose (optional)', chipsInput(f, 'person_id', [{ value: 0, label: 'Family', emoji: '👨‍👩‍👧‍👦' }, ...S.state.people.map((p) => ({ value: p.id, label: p.name, emoji: p.emoji }))])) : null), {
+    onSave: async () => { await api(c ? 'PUT' : 'POST', c ? `/countdowns/${c.id}` : '/countdowns', f); toast('Saved'); },
+    onDelete: c ? async () => confirmBox(`Delete “${c.title}”?`, null, 'Delete', true).then(async (ok) => { if (ok) await api('DELETE', `/countdowns/${c.id}`); return ok; }) : null,
+  });
+}
 function rewardsMini() {
   const rows = [];
   for (const r of S.state.rewards.filter((x) => x.active)) {
@@ -671,7 +717,19 @@ function miniRow(r, person, have) {
 // ---------------- calendar ----------------
 const calById = (id) => S.state.calendars.find((c) => c.id === id);
 const colorOf = (e) => { const c = calById(e.c); return c ? c.color : '#888'; };
-const visibleEvents = () => S.events.filter((e) => !S.hidden.has(e.c) && calById(e.c));
+const evPerson = (e) => (e.p !== undefined ? e.p : (calById(e.c) || {}).person_id || null);
+const visibleEvents = () => S.events.filter((e) => (e.c === 0 || (!S.hidden.has(e.c) && calById(e.c))) && (!S.calPerson || evPerson(e) === S.calPerson));
+function personFilter() {
+  const ids = new Set(S.state.calendars.filter((c) => c.enabled && c.person_id).map((c) => c.person_id));
+  for (const e of S.events) if (e.c === 0 && e.p) ids.add(e.p);
+  const people = S.state.people.filter((p) => ids.has(p.id));
+  if (S.calPerson && !people.some((p) => p.id === S.calPerson)) S.calPerson = null;
+  if (!people.length) return null;
+  const pick = (id) => { S.calPerson = id; localStorage.setItem('wc.calPerson', id || ''); renderView(); };
+  return h('div', { class: 'pfilter', role: 'group', 'aria-label': 'Show calendar for' },
+    h('button', { class: S.calPerson ? '' : 'on', onclick: () => pick(null) }, E('👨‍👩‍👧‍👦'), 'Everyone'),
+    people.map((p) => h('button', { class: S.calPerson === p.id ? 'on' : '', style: { '--c': p.color }, onclick: () => pick(p.id) }, h('span', { class: 'pdot' }, p.emoji), p.name)));
+}
 function viewRange(viewOverride) {
   const v = viewOverride || S.cal.view || 'week';
   const a = S.cal.anchor ?? numFromKey(todayKey());
@@ -748,7 +806,8 @@ function calendarPanel(forceView) {
   else if (view === 'week') body = weekView(s, today);
   else if (view === 'day') body = dayView(a, today);
   else body = agendaView(s, e, today);
-  return h('div', { class: 'cal' }, bar, legend, h('div', { class: 'calbody' }, body));
+  const pf = cals.length ? personFilter() : null;
+  return h('div', { class: 'cal' }, bar, pf || legend ? h('div', { class: 'calfilters' }, pf, legend) : null, h('div', { class: 'calbody' }, body));
 }
 function monthView(s, e, a, today) {
   const map = eventsByDay(s, e);
@@ -924,15 +983,55 @@ function adjustStars() {
 // ---------------- photos ----------------
 function photosView() {
   const out = h('div', null);
-  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: (e) => uploadPhotos([...e.target.files]) });
-  out.append(input, h('div', { class: 'section-title' }, E('🖼️'), `Photos (${S.state.photos.length})`, h('span', { class: 'grow' }),
-    S.state.photos.length ? h('button', { class: 'btn small', onclick: () => { startSlideshow(); } }, '▶ Slideshow') : null,
-    h('button', { class: 'btn small primary', onclick: async () => { if (await needParent()) input.click(); } }, '+ Add photos')));
-  if (!S.state.photos.length) out.append(h('div', { class: 'card empty-state' }, h('div', { class: 'big' }, '📷'), h('p', null, 'Add family photos from a phone or computer. They show as a slideshow when the screen is idle.')));
-  else out.append(h('div', { class: 'photos-grid' }, S.state.photos.map((p) => h('div', { class: 'ph' },
-    h('img', { src: `/api/photos/${p.id}/thumb`, loading: 'lazy', alt: p.caption || 'Family photo', onclick: () => { slideIdx = S.state.photos.indexOf(p) - 1; startSlideshow(); } }),
-    S.status.parent ? h('button', { class: 'del', 'aria-label': 'Delete photo', onclick: async () => { if (!(await confirmBox('Delete this photo?', null, 'Delete', true))) return; try { await api('DELETE', `/photos/${p.id}`); } catch (e) { handle(e); } refresh(); } }, '🗑') : null))));
+  const albums = S.state.albums || [];
+  if (S.album && !albums.some((a) => a.id === S.album)) S.album = null;
+  const album = albums.find((a) => a.id === S.album);
+  const shown = photosIn(S.album);
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: (e) => uploadPhotos([...e.target.files], S.album) });
+  out.append(input, h('div', { class: 'section-title' }, E('🖼️'), album ? `${album.name} (${shown.length})` : `Photos (${S.state.photos.length})`, h('span', { class: 'grow' }),
+    shown.length ? h('button', { class: 'btn small', onclick: () => startSlideshow(shown) }, '▶ Slideshow') : null,
+    album ? h('button', { class: 'btn small', onclick: async () => { if (await needParent()) editAlbum(album); } }, 'Edit album') : null,
+    h('button', { class: 'btn small primary', onclick: async () => { if (await needParent()) input.click(); } }, album ? `+ Add to ${album.name}` : '+ Add photos')));
+  out.append(h('div', { class: 'albumbar chips' },
+    h('button', { class: S.album ? '' : 'on', onclick: () => { S.album = null; renderView(); } }, E('🖼️'), `All photos · ${S.state.photos.length}`),
+    albums.map((a) => h('button', { class: S.album === a.id ? 'on' : '', 'data-album': a.id, onclick: () => { S.album = a.id; renderView(); } }, E(a.emoji), `${a.name} · ${photosIn(a.id).length}`)),
+    h('button', { class: 'add', onclick: async () => { if (await needParent()) editAlbum(null); } }, '+ New album')));
+  if (!shown.length) out.append(h('div', { class: 'card empty-state' }, h('div', { class: 'big' }, '📷'), h('p', null, album ? `No photos in ${album.name} yet. Add new ones here, or tag existing photos with 🏷 on All photos.` : 'Add family photos from a phone or computer. They show as a slideshow when the screen is idle.')));
+  else out.append(h('div', { class: 'photos-grid' }, shown.map((p, i) => h('div', { class: 'ph' },
+    h('img', { src: `/api/photos/${p.id}/thumb`, loading: 'lazy', alt: p.caption || 'Family photo', onclick: () => startSlideshow(shown, i) }),
+    albumIdsOf(p.id).length ? h('div', { class: 'tags' }, albumIdsOf(p.id).map((id) => (albums.find((a) => a.id === id) || {}).emoji).filter(Boolean).join(' ')) : null,
+    S.status.parent ? h('div', { class: 'tools' },
+      albums.length ? h('button', { 'aria-label': 'Albums for this photo', onclick: () => photoAlbums(p) }, '🏷') : null,
+      h('button', { 'aria-label': 'Delete photo', onclick: async () => { if (!(await confirmBox('Delete this photo?', null, 'Delete', true))) return; try { await api('DELETE', `/photos/${p.id}`); } catch (e) { handle(e); } refresh(); } }, '🗑')) : null))));
+  if (albums.length) {
+    const want = set().slideshow_albums || [];
+    out.append(h('div', { class: 'section-title' }, E('▶️'), 'Idle slideshow shows'));
+    out.append(h('div', { class: 'card sbox' }, h('div', { class: 'chips slidepick' },
+      h('button', { class: want.length ? '' : 'on', onclick: async () => { if (await needParent()) saveSlideAlbums([]); } }, E('🖼️'), 'All photos'),
+      albums.map((a) => h('button', { class: want.includes(a.id) ? 'on' : '', onclick: async () => { if (await needParent()) saveSlideAlbums(want.includes(a.id) ? want.filter((x) => x !== a.id) : [...want, a.id]); } }, E(a.emoji), a.name))),
+      h('p', { class: 'help' }, want.length ? `${slideshowPhotos().length} photos from the picked albums.` : 'Every photo is used. Pick albums to limit it.')));
+  }
   return out;
+}
+async function saveSlideAlbums(ids) {
+  try { const r = await api('PUT', '/settings', { slideshow_albums: ids }); S.state.settings = r.settings; renderView(); } catch (e) { handle(e); }
+}
+EMOJI.albums = ['📁', '🏖️', '🎄', '🎂', '🏕️', '⚽', '🐶', '👶', '👵', '🏡', '✈️', '🎃', '🌸', '❄️', '🎓', '❤️'];
+function editAlbum(a) {
+  const f = a ? { ...a } : { name: '', emoji: '📁' };
+  formSheet(a ? 'Edit album' : 'New album', () => h('div', null,
+    field('Name', textInput(f, 'name', { maxlength: 40, placeholder: 'Summer 2026, Grandparents…' })),
+    field('Icon', emojiInput(f, 'emoji', 'albums'))), {
+    onSave: async () => { const r = await api(a ? 'PUT' : 'POST', a ? `/albums/${a.id}` : '/albums', f); if (!a) S.album = r.id; toast('Saved'); },
+    onDelete: a ? async () => confirmBox(`Delete the album “${a.name}”?`, 'The photos stay in All photos.', 'Delete', true).then(async (ok) => { if (ok) await api('DELETE', `/albums/${a.id}`); return ok; }) : null,
+  });
+}
+function photoAlbums(p) {
+  const f = { ids: albumIdsOf(p.id) };
+  formSheet('Albums for this photo', () => h('div', null, h('img', { src: `/api/photos/${p.id}/thumb`, alt: '', style: { maxHeight: '10rem', borderRadius: '12px', display: 'block', marginBottom: '1rem' } }),
+    field('In albums', chipsInput(f, 'ids', S.state.albums.map((a) => ({ value: a.id, label: a.name, emoji: a.emoji })), { multi: true }))), {
+    onSave: async () => { await api('PUT', `/photos/${p.id}/albums`, { album_ids: f.ids }); toast('Saved'); },
+  });
 }
 async function resize(file, max, q) {
   const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(async () => {
@@ -945,7 +1044,7 @@ async function resize(file, max, q) {
   const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', q));
   return { blob, w, h: hh };
 }
-async function uploadPhotos(files) {
+async function uploadPhotos(files, albumId) {
   let ok = 0;
   for (const [i, f] of files.entries()) {
     toast(`Uploading ${i + 1} of ${files.length}…`, 60000);
@@ -954,7 +1053,7 @@ async function uploadPhotos(files) {
       if (big.blob.size > 1.4e6) big = await resize(f, 1600, 0.75);
       const th = await resize(f, 480, 0.7);
       const fd = new FormData();
-      fd.append('photo', big.blob, 'photo.jpg'); fd.append('thumb', th.blob, 'thumb.jpg'); fd.append('w', big.w); fd.append('h', big.h);
+      fd.append('photo', big.blob, 'photo.jpg'); fd.append('thumb', th.blob, 'thumb.jpg'); fd.append('w', big.w); fd.append('h', big.h); if (albumId) fd.append('album_id', albumId);
       await api('POST', '/photos', fd); ok++;
     } catch (e) { handle(e); if (e.cancelled) break; }
   }

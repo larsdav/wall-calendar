@@ -220,6 +220,111 @@ if (steps.includes(2)) {
   await open(page, 'chores', '.chores-grid'); await shot(page, 'chores-1920');
 }
 
+// ---------- step 3: countdowns, calendar person filter, photo albums ----------
+if (steps.includes(3)) {
+  await lockState(page, false);
+  st = await state();
+  const [emma] = kids, mom = st.people.find((p) => p.name === 'Mom') || st.people.find((p) => p.role === 'parent');
+  for (const c of st.countdowns) await api(page, 'DELETE', `/countdowns/${c.id}`);
+  for (const a of st.albums) await api(page, 'DELETE', `/albums/${a.id}`);
+  await api(page, 'PUT', '/settings', { slideshow_albums: [] });
+  const addDays = (n) => new Date(Date.parse(today + 'T12:00:00Z') + n * 86400e3).toISOString().slice(0, 10);
+  // countdowns
+  await open(page, 'home', '.mini-cd');
+  await page.click('.mini-cd button:has-text("+ Add")');
+  await page.fill('.sheet input[placeholder^="Disney"]', 'Disney trip');
+  await page.fill('.sheet input[type=date]', addDays(55));
+  await page.click('.sheet .emojis button:has-text("✈️")');
+  await page.click('.sheet .btn.primary:has-text("Save")');
+  await page.waitForSelector('.mini-cd .cd:has-text("Disney trip")', { timeout: 8000 });
+  check('countdown added from the wall shows days left', (await page.textContent('.mini-cd .cd:has-text("Disney trip") .cdn')).startsWith('55'));
+  const bday = addDays(1).replace(/^\d{4}/, '2018');
+  await api(page, 'POST', '/countdowns', { title: `${emma.name}'s birthday`, emoji: '🎂', date: bday, yearly: true, person_id: emma.id });
+  await api(page, 'POST', '/countdowns', { title: 'Pumpkin carving', emoji: '🎃', date: today });
+  await api(page, 'POST', '/countdowns', { title: 'Last summer trip', emoji: '🏖️', date: addDays(-30) });
+  await lockState(page, true);
+  await open(page, 'home', '.mini-cd .cd');
+  const rows = await page.$$eval('.mini-cd .cd', (els) => els.map((e) => e.querySelector('.cdt').firstChild.textContent + '|' + e.querySelector('.cdn').textContent));
+  check('countdowns ordered soonest first, yearly birthday rolls forward, past ones hidden', rows.join(',') === `Pumpkin carving|Today!,${emma.name}'s birthday|Tomorrow,Disney trip|55days`, rows.join(','));
+  await shot(page, 'home-1920');
+  await page.click('.mini-cd .cd:has-text("Disney trip")'); await page.waitForTimeout(500);
+  check('editing a countdown asks for the PIN when locked', await page.isVisible('.pin .pad'));
+  await page.keyboard.press('Escape');
+  // calendar person filter: two calendars, one assigned to Mom, one to Emma
+  await lockState(page, false);
+  st = await state();
+  const HOL = 'https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics';
+  let c1 = st.calendars.find((c) => c.name === 'US Holidays');
+  if (!c1) c1 = { id: (await api(page, 'POST', '/calendars', { name: 'US Holidays', url: HOL, color: '#E76F51' })).id };
+  let c2 = st.calendars.find((c) => c.name === 'School (test)');
+  if (!c2) c2 = { id: (await api(page, 'POST', '/calendars', { name: 'School (test)', url: HOL + '?copy=2', color: '#2A9D8F', person_id: emma.id })).id };
+  await api(page, 'PUT', `/calendars/${c1.id}`, { name: 'US Holidays', color: '#E76F51', person_id: mom.id });
+  await api(page, 'PUT', `/calendars/${c2.id}`, { name: 'School (test)', color: '#2A9D8F', person_id: emma.id });
+  await page.evaluate(() => localStorage.removeItem('wc.calPerson'));
+  await open(page, 'calendar', '.pfilter');
+  await page.click('.seg button:has-text("Month")'); await page.waitForTimeout(1500);
+  const count = () => page.$$eval('.calbody .ev, .calbody .chip, .calbody [data-ev]', (els) => els.length);
+  const all = await count();
+  await page.click(`.pfilter button:has-text("${mom.name}")`); await page.waitForTimeout(600);
+  const momN = await count();
+  check('person filter narrows the calendar to that person', all > 0 && momN > 0 && momN < all, `${all} -> ${momN}`);
+  await shot(page, 'calendar-filter-1920');
+  await page.reload(); await page.waitForSelector('.pfilter'); await page.click('.seg button:has-text("Month")'); await page.waitForTimeout(1500);
+  check('person filter is remembered on this screen', await page.isVisible(`.pfilter button.on:has-text("${mom.name}")`));
+  await page.click('.pfilter button:has-text("Everyone")'); await page.waitForTimeout(600);
+  check('Everyone shows all again', (await count()) === all);
+  await open(phone, 'calendar', '.pfilter'); await shot(phone, 'calendar-390');
+  // albums
+  await open(page, 'photos', '.albumbar');
+  await page.click('.albumbar button:has-text("+ New album")');
+  await page.fill('.sheet input[placeholder^="Summer"]', 'Beach 2026');
+  await page.click('.sheet .emojis button:has-text("🏖️")');
+  await page.click('.sheet .btn.primary:has-text("Save")');
+  await page.waitForSelector('.section-title:has-text("Beach 2026 (0)")', { timeout: 8000 });
+  check('new album opens empty', true);
+  await page.setInputFiles('#view input[type=file]', ['/tmp/e2e-photo0.jpg', '/tmp/e2e-photo1.jpg']);
+  await page.waitForSelector('.section-title:has-text("Beach 2026 (2)")', { timeout: 30000 });
+  check('photos uploaded inside an album land in it', true);
+  await api(page, 'POST', '/albums', { name: 'Winter', emoji: '❄️' });
+  await page.reload(); await page.waitForSelector('.albumbar');
+  await page.click('.albumbar button:has-text("All photos")'); await page.waitForTimeout(800);
+  st = await state();
+  if (!st.photos.some((p) => !st.photo_albums.some((r) => r[0] === p.id))) {
+    await page.setInputFiles('#view input[type=file]', ['/tmp/e2e-photo2.jpg']);
+    await page.waitForFunction((n) => document.querySelectorAll('.photos-grid .ph').length > n, st.photos.length, { timeout: 30000 });
+    st = await state();
+  }
+  const loose = st.photos.find((p) => !st.photo_albums.some((r) => r[0] === p.id));
+  if (loose) {
+    await page.click(`.ph:has(img[src="/api/photos/${loose.id}/thumb"]) button[aria-label="Albums for this photo"]`);
+    await page.click('.sheet .chips button:has-text("Winter")');
+    await page.click('.sheet .btn.primary:has-text("Save")'); await page.waitForTimeout(1500);
+    st = await state();
+    const win = st.albums.find((a) => a.name === 'Winter');
+    check('tag an existing photo into an album', st.photo_albums.some((r) => r[0] === loose.id && r[1] === win.id));
+  } else check('tag an existing photo into an album (needs an untagged photo)', false);
+  await shot(page, 'photos-1920');
+  const beach = st.albums.find((a) => a.name === 'Beach 2026');
+  await page.click('.slidepick button:has-text("Beach 2026")'); await page.waitForTimeout(1500);
+  st = await state();
+  check('slideshow limited to chosen albums (setting saved)', JSON.stringify(st.settings.slideshow_albums) === JSON.stringify([beach.id]));
+  // slideshow only cycles Beach photos
+  const beachIds = st.photo_albums.filter((r) => r[1] === beach.id).map((r) => r[0]);
+  await lockState(page, false);
+  await api(page, 'PUT', '/settings', { slide_seconds: 4, idle_minutes: 1 });
+  await page.reload(); await page.waitForSelector('.rail');
+  await page.evaluate(() => { window.__seen = new Set(); new MutationObserver(() => document.querySelectorAll('#slideshow img').forEach((i) => i.src && window.__seen.add(i.getAttribute('src')))).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['src'] }); });
+  await page.waitForSelector('#slideshow:not([hidden])', { timeout: 90000 });
+  await page.waitForTimeout(9500);
+  const seen = await page.evaluate(() => [...window.__seen].map((s) => +s.split('/').pop()));
+  check('idle slideshow shows only the chosen album', seen.length > 0 && seen.every((id) => beachIds.includes(id)), `seen ${[...new Set(seen)]} beach ${beachIds}`);
+  await shot(page, 'slideshow-1920');
+  await page.mouse.click(500, 500); await page.waitForTimeout(500);
+  await api(page, 'PUT', '/settings', { slide_seconds: 12, idle_minutes: 5 });
+  await open(phone, 'photos', '.albumbar'); await shot(phone, 'photos-390', true);
+  await open(phone, 'home', '.mini-cd'); await shot(phone, 'home-390', true);
+}
+
 const extra = process.env.E2E_EXTRA ? await import(process.env.E2E_EXTRA) : null;
 if (extra) await extra.default({ page, phone, api, state, check, open, shot, lockState, typePin, steps, today, kids, base });
 

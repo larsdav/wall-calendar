@@ -199,3 +199,30 @@ export function tickStep(done, step, on, count) {
   if (on) set.add(step); else set.delete(step);
   return [...set].sort((a, b) => a - b);
 }
+
+// ---- countdowns ----
+const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+/** Next date a countdown lands on, on or after today ('YYYY-MM-DD'). One-off dates are returned as-is (may be past). */
+export function nextOccurrence(date, yearly, today) {
+  if (!yearly) return date;
+  const [, mm, dd] = date.split('-').map(Number), ty = +today.slice(0, 4);
+  for (const y of [ty, ty + 1]) {
+    const d = mm === 2 && dd === 29 && !isLeap(y) ? 28 : dd;
+    const k = `${y}-${String(mm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    if (k >= today) return k;
+  }
+  return date;
+}
+export const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400e3);
+/** Countdowns with next date and days left, upcoming first; past one-offs last (days < 0). */
+export function upcomingCountdowns(list, today) {
+  return list.map((c) => { const next = nextOccurrence(c.date, !!c.yearly, today); return { ...c, next, days: daysBetween(today, next) }; })
+    .sort((a, b) => (a.days < 0) - (b.days < 0) || (a.days < 0 ? b.days - a.days : a.days - b.days));
+}
+export function cleanCountdown(b, personIds) {
+  const c = { title: cleanText(b.title, 50), emoji: cleanEmoji(b.emoji || '🎉'), date: /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') && !isNaN(Date.parse(b.date + 'T00:00:00Z')) ? b.date : null, yearly: b.yearly ? 1 : 0, person_id: personIds.includes(+b.person_id) ? +b.person_id : null };
+  if (!c.title) return { error: 'Give it a name' };
+  if (!c.date) return { error: 'Pick a date' };
+  return { countdown: c };
+}
+export function cleanIds(a, valid, max = 50) { return Array.isArray(a) ? [...new Set(a.map(Number).filter((x) => valid.includes(x)))].slice(0, max) : []; }

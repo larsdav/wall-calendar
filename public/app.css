@@ -440,3 +440,31 @@ ul.ing { margin: .4rem 0 0; padding-left: 1.3rem; columns: 2; font-size: 1.05rem
   .kv-head .nm h2 { font-size: 1.5rem; }
   .steps, .routine-sheet .steps { grid-template-columns: 1fr; }
 }
+
+/* ---------- countdowns, calendar person filter, albums ---------- */
+.mini-cd { padding: .9rem 1rem; display: flex; flex-direction: column; }
+.cd { display: flex; align-items: center; gap: .7rem; width: 100%; text-align: left; padding: .45rem 0; border-bottom: 1px solid var(--line); min-height: 3.4rem; }
+.cd:last-child { border-bottom: 0; }
+.cd .cde { font-size: 1.9rem; width: 2.4rem; text-align: center; font-family: var(--emoji); }
+.cd .cdt { flex: 1; min-width: 0; font-weight: 700; font-size: 1.1rem; }
+.cd .cdt small { display: block; color: var(--muted); font-weight: 600; font-size: .82rem; }
+.cd .cdn { display: flex; flex-direction: column; align-items: center; min-width: 4.2rem; padding: .25rem .6rem; border-radius: 14px; background: color-mix(in srgb, var(--c, var(--accent)) 16%, transparent); font-weight: 800; font-size: 1.6rem; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.cd .cdn small { font-size: .7rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.cd.today .cdn { font-size: 1.1rem; background: var(--c, var(--accent)); color: #fff; padding: .55rem .7rem; }
+.cd.past { opacity: .5; }
+.cd.past .cdn { font-size: 1rem; }
+.calfilters { display: flex; flex-wrap: wrap; gap: .4rem .9rem; align-items: center; margin-bottom: .5rem; }
+.calfilters .legend { margin: 0; }
+.pfilter { display: flex; gap: .35rem; flex-wrap: wrap; }
+.pfilter button { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .8rem .25rem .3rem; border-radius: 999px; background: var(--panel2); font-weight: 700; font-size: .95rem; min-height: 2.6rem; border: 2px solid transparent; }
+.pfilter button > .emoji { margin-left: .4rem; }
+.pfilter .pdot { width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--c) 25%, transparent); font-family: var(--emoji); font-size: 1.15rem; }
+.pfilter button.on { border-color: var(--c, var(--ink)); background: color-mix(in srgb, var(--c, var(--ink)) 14%, var(--panel)); }
+.albumbar { margin-bottom: var(--gap); }
+.albumbar button.add { border: 2px dashed var(--line); background: transparent; }
+.photos-grid .tools { position: absolute; top: .4rem; right: .4rem; display: flex; gap: .35rem; }
+.photos-grid .tools button { width: 2.6rem; height: 2.6rem; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 1.1rem; }
+.photos-grid .tags { position: absolute; left: .4rem; bottom: .4rem; background: rgba(0,0,0,.5); border-radius: 999px; padding: .1rem .5rem; font-size: 1rem; font-family: var(--emoji); }
+.slidepick { margin-bottom: .3rem; }
+.cd.word .cdn { font-size: 1.05rem; padding: .55rem .7rem; }
+@media (max-width: 700px) { .photos-grid { grid-template-columns: repeat(2, 1fr); gap: .4rem; } .cd .cdt { font-size: 1rem; } }

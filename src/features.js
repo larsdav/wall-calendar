@@ -1,6 +1,6 @@
 // Family features added after v1: lists, meal plan (and later routines, countdowns, albums, family events).
 import { json, err, all, first, run, J, body } from './util.js';
-import { cleanText, cleanEmoji, splitItems, newIngredients, cleanMeal, isDue, tickStep } from './logic.js';
+import { cleanText, cleanEmoji, splitItems, newIngredients, cleanMeal, isDue, tickStep, cleanCountdown, cleanIds } from './logic.js';
 import { dayKey } from './tz.js';
 
 const MAX_LISTS = 12, MAX_ITEMS = 300;
@@ -8,13 +8,16 @@ const dayAdd = (k, n) => new Date(Date.parse(k + 'T00:00:00Z') + n * 86400e3).to
 
 export async function featureState(db, s, today) {
   const recent = Date.now() - 2 * 86400e3;
-  const [lists, items, meals, progress] = await Promise.all([
+  const [lists, items, meals, progress, countdowns, albums, photoAlbums] = await Promise.all([
     all(db, 'SELECT id, name, emoji, kind, sort FROM lists ORDER BY sort, id'),
     all(db, 'SELECT id, list_id, text, done, done_at, source, created_at FROM list_items WHERE done = 0 OR done_at >= ? ORDER BY done, sort, id', recent),
     all(db, 'SELECT day, slot, title, emoji, ingredients, note FROM meals WHERE day >= ? AND day <= ? ORDER BY day', dayAdd(today, -14), dayAdd(today, 42)),
     all(db, 'SELECT task_id, person_id, day, done FROM routine_progress WHERE day = ?', today),
+    all(db, 'SELECT id, title, emoji, date, yearly, person_id FROM countdowns ORDER BY date, id'),
+    all(db, 'SELECT id, name, emoji, sort FROM albums ORDER BY sort, id'),
+    all(db, 'SELECT photo_id, album_id FROM photo_albums'),
   ]);
-  return { routine_progress: progress.map((r) => ({ ...r, done: J(r.done, []) })), lists, list_items: items.map((i) => ({ ...i, done: !!i.done })), meals: meals.map((m) => ({ ...m, ingredients: J(m.ingredients, []) })) };
+  return { countdowns: countdowns.map((c) => ({ ...c, yearly: !!c.yearly })), albums, photo_albums: photoAlbums.map((r) => [r.photo_id, r.album_id]), routine_progress: progress.map((r) => ({ ...r, done: J(r.done, []) })), lists, list_items: items.map((i) => ({ ...i, done: !!i.done })), meals: meals.map((m) => ({ ...m, ingredients: J(m.ingredients, []) })) };
 }
 
 async function addItems(db, listId, texts, source) {
@@ -46,6 +49,45 @@ export async function featureApi({ req, db, path, m, s, parent }) {
     const done = tickStep(J(cur && cur.done, []), step, !!b.done, t.steps.length);
     await run(db, 'INSERT INTO routine_progress (task_id, person_id, day, done, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (task_id, person_id, day) DO UPDATE SET done = excluded.done, updated_at = excluded.updated_at', t.id, person.id, today, JSON.stringify(done), Date.now());
     return json({ ok: true, done, all: done.length === t.steps.length });
+  }
+
+  // ----- countdowns (parents manage; everyone sees them)
+  if (path === '/countdowns' && m === 'POST' || ((pm = /^\/countdowns\/(\d+)$/.exec(path)) && (m === 'PUT' || m === 'DELETE'))) {
+    const g = needParent(); if (g) return g;
+    if (m === 'DELETE') { await run(db, 'DELETE FROM countdowns WHERE id = ?', +pm[1]); return json({ ok: true }); }
+    const ids = (await all(db, 'SELECT id FROM people')).map((p) => p.id);
+    const { countdown: c, error } = cleanCountdown(await body(req), ids);
+    if (error) return err(400, error);
+    if (m === 'PUT') { await run(db, 'UPDATE countdowns SET title = ?, emoji = ?, date = ?, yearly = ?, person_id = ? WHERE id = ?', c.title, c.emoji, c.date, c.yearly, c.person_id, +pm[1]); return json({ ok: true }); }
+    const n = await first(db, 'SELECT COUNT(*) AS n FROM countdowns');
+    if (n.n >= 40) return err(400, 'Up to 40 countdowns');
+    const r = await run(db, 'INSERT INTO countdowns (title, emoji, date, yearly, person_id, created_at) VALUES (?, ?, ?, ?, ?, ?)', c.title, c.emoji, c.date, c.yearly, c.person_id, Date.now());
+    return json({ ok: true, id: r.meta.last_row_id });
+  }
+
+  // ----- photo albums (parents only)
+  if (path === '/albums' && m === 'POST' || ((pm = /^\/albums\/(\d+)$/.exec(path)) && (m === 'PUT' || m === 'DELETE'))) {
+    const g = needParent(); if (g) return g;
+    if (m === 'DELETE') {
+      await db.batch([db.prepare('DELETE FROM albums WHERE id = ?').bind(+pm[1]), db.prepare('DELETE FROM photo_albums WHERE album_id = ?').bind(+pm[1])]);
+      return json({ ok: true });
+    }
+    const b = await body(req);
+    const name = cleanText(b.name, 40); if (!name) return err(400, 'Give the album a name');
+    if (m === 'PUT') { await run(db, 'UPDATE albums SET name = ?, emoji = ? WHERE id = ?', name, cleanEmoji(b.emoji || '📁'), +pm[1]); return json({ ok: true }); }
+    const n = await first(db, 'SELECT COUNT(*) AS n, COALESCE(MAX(sort), 0) AS s FROM albums');
+    if (n.n >= 30) return err(400, 'Up to 30 albums');
+    const r = await run(db, 'INSERT INTO albums (name, emoji, sort, created_at) VALUES (?, ?, ?, ?)', name, cleanEmoji(b.emoji || '📁'), n.s + 1, Date.now());
+    return json({ ok: true, id: r.meta.last_row_id });
+  }
+  if ((pm = /^\/photos\/(\d+)\/albums$/.exec(path)) && m === 'PUT') {
+    const g = needParent(); if (g) return g;
+    const pid = +pm[1];
+    if (!(await first(db, 'SELECT id FROM photos WHERE id = ?', pid))) return err(404, 'Not found');
+    const valid = (await all(db, 'SELECT id FROM albums')).map((a) => a.id);
+    const ids = cleanIds((await body(req)).album_ids, valid);
+    await db.batch([db.prepare('DELETE FROM photo_albums WHERE photo_id = ?').bind(pid), ...ids.map((a) => db.prepare('INSERT INTO photo_albums (photo_id, album_id) VALUES (?, ?)').bind(pid, a))]);
+    return json({ ok: true, album_ids: ids });
   }
 
   // ----- lists: anyone on a connected screen can add / tick / clear items; parents manage the lists themselves
