@@ -1,0 +1,39 @@
+-- Wall calendar D1 schema. Safe to re-run (IF NOT EXISTS).
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS people (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL, emoji TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'kid', sort INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS calendars (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, color TEXT NOT NULL, person_id INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1, synced_at INTEGER, ok_at INTEGER, expanded_at INTEGER, error TEXT,
+  hash TEXT, events TEXT, event_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY, title TEXT NOT NULL, emoji TEXT NOT NULL, kind TEXT NOT NULL, stars INTEGER NOT NULL,
+  recur TEXT NOT NULL, days TEXT NOT NULL DEFAULT '[]', date TEXT, assignees TEXT NOT NULL DEFAULT '[]',
+  part TEXT NOT NULL DEFAULT 'any', active INTEGER NOT NULL DEFAULT 1, sort INTEGER NOT NULL DEFAULT 0,
+  start_day TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS completions (
+  id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, person_id INTEGER NOT NULL, day TEXT NOT NULL,
+  status TEXT NOT NULL, stars INTEGER NOT NULL, created_at INTEGER NOT NULL, decided_at INTEGER,
+  UNIQUE (task_id, person_id, day));
+CREATE INDEX IF NOT EXISTS completions_day ON completions (day);
+CREATE TABLE IF NOT EXISTS ledger (
+  id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL, delta INTEGER NOT NULL, kind TEXT NOT NULL,
+  task_id INTEGER, reward_id INTEGER, completion_id INTEGER, note TEXT, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS ledger_person ON ledger (person_id, created_at);
+CREATE TABLE IF NOT EXISTS rewards (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', emoji TEXT NOT NULL,
+  cost INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT 'kid', person_ids TEXT NOT NULL DEFAULT '[]',
+  task_ids TEXT NOT NULL DEFAULT '[]', active INTEGER NOT NULL DEFAULT 1, sort INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS redemptions (
+  id INTEGER PRIMARY KEY, reward_id INTEGER NOT NULL, reward_name TEXT NOT NULL, person_id INTEGER,
+  cost INTEGER NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS photos (
+  id INTEGER PRIMARY KEY, mime TEXT NOT NULL, w INTEGER, h INTEGER, size INTEGER NOT NULL,
+  bytes BLOB NOT NULL, thumb BLOB NOT NULL, caption TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+  idle_ms INTEGER NOT NULL DEFAULT 0, last_seen INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS attempts (key TEXT NOT NULL, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS attempts_key ON attempts (key, ts);
