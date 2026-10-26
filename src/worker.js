@@ -2,7 +2,9 @@
 import { ASSETS, ASSET_VERSION } from './assets.gen.js';
 import { expandIcs, normalizeFeedUrl } from './ics.js';
 import { dayKey, validTz } from './tz.js';
-import { balances, rewardProgress, checkRedeem, isDue, cleanTask, cleanReward, cleanText, cleanEmoji, COLOR_RE } from './logic.js';
+import { json, err, all, first, run, J, body } from './util.js';
+import { featureApi, featureState } from './features.js';
+import { balances, rewardProgress, checkRedeem, isDue, cleanTask, cleanReward, cleanText, cleanEmoji, cleanMealSlots, COLOR_RE } from './logic.js';
 
 const DEV_COOKIE = '__Host-wc-dev';
 const PAR_COOKIE = '__Host-wc-par';
@@ -18,7 +20,7 @@ const enc = new TextEncoder();
 const DEFAULTS = {
   family_name: 'Our Family', tz: 'America/Chicago', theme: 'auto', night_start: '21:00', night_end: '06:30',
   night_dim: 55, idle_minutes: 5, slide_seconds: 12, week_start: 0, clock24: false, default_view: 'week',
-  units: 'F', weather: null, approval: false, drift: true,
+  units: 'F', weather: null, approval: false, drift: true, meal_slots: ['dinner'],
 };
 const SETTING_KEYS = Object.keys(DEFAULTS);
 
@@ -30,8 +32,6 @@ const SEC = {
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
 };
 function withSec(res) { const r = new Response(res.body, res); for (const [k, v] of Object.entries(SEC)) r.headers.set(k, v); return r; }
-const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
-const err = (status, error) => json({ error }, status);
 
 const b64bytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 function serveAsset(name, request) {
@@ -64,10 +64,6 @@ async function pinMatches(pin, stored) {
 const validPin = (p) => typeof p === 'string' && /^\d{4,8}$/.test(p);
 
 // ---------- db helpers ----------
-const all = async (db, sql, ...args) => (await db.prepare(sql).bind(...args).all()).results;
-const first = (db, sql, ...args) => db.prepare(sql).bind(...args).first();
-const run = (db, sql, ...args) => db.prepare(sql).bind(...args).run();
-const J = (s, d) => { try { return s == null ? d : JSON.parse(s); } catch { return d; } };
 
 async function getSettings(db) {
   const rows = await all(db, 'SELECT key, value FROM settings');
@@ -184,17 +180,11 @@ async function buildState(env, parent) {
     v: ASSET_VERSION, now: Date.now(), today, settings: s, people: core.people, tasks: core.tasks, rewards,
     completions, balances: balances(core.ledger), ledger: core.ledger.slice(-150).reverse(),
     redemptions: core.redemptions.slice(-60).reverse(), calendars, photos,
+    ...(await featureState(db, s, today)),
   };
 }
 
 // ---------- request handling ----------
-async function body(req, max = 64 * 1024) {
-  const len = +(req.headers.get('content-length') || 0);
-  if (len > max) throw Object.assign(new Error('Request too large'), { status: 413 });
-  const t = await req.text();
-  if (t.length > max) throw Object.assign(new Error('Request too large'), { status: 413 });
-  try { return t ? JSON.parse(t) : {}; } catch { throw Object.assign(new Error('Bad JSON'), { status: 400 }); }
-}
 
 async function api(req, env, ctx, url) {
   const db = env.DB;
@@ -301,6 +291,9 @@ async function api(req, env, ctx, url) {
     return json({ ok: true, status, stars: t.stars, completion_id: cid });
   }
 
+  const feat = await featureApi({ req, db, env, path, m, s, parent: !!parent, url });
+  if (feat) return feat;
+
   // ---------- parent only ----------
   if (!parent) return err(403, 'parent');
 
@@ -320,6 +313,7 @@ async function api(req, env, ctx, url) {
     if ('approval' in b) next.approval = !!b.approval;
     if ('default_view' in b && ['month', 'week', 'day', 'agenda'].includes(b.default_view)) next.default_view = b.default_view;
     if ('units' in b && ['F', 'C'].includes(b.units)) next.units = b.units;
+    if ('meal_slots' in b) next.meal_slots = cleanMealSlots(b.meal_slots);
     if ('weather' in b) {
       const w = b.weather;
       next.weather = w && Number.isFinite(+w.lat) && Number.isFinite(+w.lon) && Math.abs(+w.lat) <= 90 && Math.abs(+w.lon) <= 180

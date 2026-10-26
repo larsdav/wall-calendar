@@ -143,3 +143,33 @@ export function cleanReward(b, personIds, taskIds) {
   if (!(+b.cost >= 1)) return { error: 'Star cost must be at least 1' };
   return { reward: r };
 }
+
+// ---- lists and meal plan ----
+export const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner'];
+export function cleanMealSlots(v) {
+  const a = Array.isArray(v) ? MEAL_SLOTS.filter((s) => v.includes(s)) : [];
+  return a.length ? a : ['dinner'];
+}
+/** Split typed text into list entries: one per line or comma ("milk, eggs\nbread"). */
+export function splitItems(text, max = 40) {
+  return String(text ?? '').split(/[\n,;]+/).map((s) => cleanText(s.replace(/^[-*•\s]+/, ''), 80)).filter(Boolean).slice(0, max);
+}
+const norm = (s) => String(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+/** Ingredients not already on the list as an open (unchecked) item, de-duplicated, order kept. */
+export function newIngredients(ingredients, openItems) {
+  const have = new Set(openItems.map((i) => norm(i.text)));
+  const out = [];
+  for (const raw of ingredients) {
+    const t = cleanText(raw, 80), k = norm(t);
+    if (!k || have.has(k)) continue;
+    have.add(k); out.push(t);
+  }
+  return out;
+}
+export function cleanMeal(b) {
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(b.day || '') ? b.day : null;
+  const slot = MEAL_SLOTS.includes(b.slot) ? b.slot : null;
+  if (!day || !slot) return { error: 'Pick a day and meal' };
+  const ingredients = Array.isArray(b.ingredients) ? b.ingredients.map((x) => cleanText(x, 80)).filter(Boolean).slice(0, 40) : splitItems(b.ingredients);
+  return { meal: { day, slot, title: cleanText(b.title, 80), emoji: b.emoji ? cleanEmoji(b.emoji) : '', ingredients, note: cleanText(b.note, 200) } };
+}

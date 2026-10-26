@@ -382,12 +382,13 @@ function nextEvent() {
   return list.sort((a, b) => (b.a - a.a) || (a.s > b.s ? 1 : -1))[0];
 }
 
+const typing = () => { const a = document.activeElement; return !!(a && a.matches && a.matches('#view input, #view textarea') && a.value); };
 function startLoops() {
   if (startLoops.done) return; startLoops.done = true;
   ['pointerdown', 'keydown', 'touchstart'].forEach((ev) => document.addEventListener(ev, onActivity, { passive: true, capture: true }));
   setInterval(() => { renderTop(); applyTheme(); }, 15e3);
-  setInterval(() => { if (!S.modalOpen && document.visibilityState === 'visible') refresh(); }, 60e3);
-  setInterval(() => loadEvents(true).then(() => { if (!S.modalOpen) renderView(); }), 5 * 60e3);
+  setInterval(() => { if (!S.modalOpen && document.visibilityState === 'visible' && !typing()) refresh(); }, 60e3);
+  setInterval(() => loadEvents(true).then(() => { if (!S.modalOpen && !typing()) renderView(); }), 5 * 60e3);
   setInterval(() => loadWeather(), 10 * 60e3);
   setInterval(drift, 3 * 60e3);
   setInterval(() => {
@@ -411,7 +412,12 @@ function scheduleDailyReload() { // reload around 3:10am so the kiosk picks up n
 }
 
 // ---------------- chrome ----------------
-const NAV = [['home', '🏠', 'Home'], ['calendar', '📅', 'Calendar'], ['chores', '✅', 'Chores'], ['rewards', '🎁', 'Rewards'], ['photos', '🖼️', 'Photos'], ['settings', '⚙️', 'Settings']];
+const NAV = [['home', '🏠', 'Home'], ['calendar', '📅', 'Calendar'], ['chores', '✅', 'Chores'], ['rewards', '🎁', 'Rewards'], ['lists', '🛒', 'Lists'], ['meals', '🍽️', 'Meals'], ['photos', '🖼️', 'Photos'], ['settings', '⚙️', 'Settings']];
+const PHONE_TABS = ['home', 'calendar', 'chores', 'lists'];
+function moreSheet() {
+  let m;
+  m = modal(h('div', null, h('h2', null, 'More'), h('div', { class: 'more-grid' }, NAV.filter((n) => !PHONE_TABS.includes(n[0])).map(([id, ico, label]) => h('button', { class: 'navbtn' + (S.view === id ? ' on' : ''), onclick: () => { m.close(true); go(id); } }, h('span', { class: 'ico' }, ico), label)))), { cancel: true });
+}
 function go(v) { S.view = v; if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v); render(); }
 function render() {
   if (!S.state) return;
@@ -423,7 +429,8 @@ function render() {
       S.offline ? h('div', { class: 'offline-banner' }, `Offline · showing what was saved at ${S.state.now ? timeStr(S.state.now) : 'earlier'}`) : null,
       h('header', { class: 'topbar', id: 'topbar' }),
       h('section', { class: 'view', id: 'view' }),
-      h('nav', { class: 'tabbar' }, NAV.map(navBtn))));
+      h('nav', { class: 'tabbar' }, NAV.filter((n) => PHONE_TABS.includes(n[0])).map(navBtn),
+        h('button', { class: 'navbtn' + (PHONE_TABS.includes(S.view.split('/')[0]) ? '' : ' on'), onclick: moreSheet }, h('span', { class: 'ico' }, '☰'), 'More'))));
   renderChrome(); renderTop(); renderView();
 }
 function renderChrome() { const b = $('#lockbtn'); if (b && S.status) b.replaceChildren(h('span', { class: 'ico' }, S.status.parent ? '🔓' : '🔒'), S.status.parent ? 'Lock' : 'Parent'); }
@@ -470,9 +477,10 @@ function syncBox() {
 function renderView() {
   const v = $('#view'); if (!v || !S.state) return;
   const st = v.scrollTop;
-  const views = { home: homeView, calendar: () => h('div', { class: 'card', style: { height: '100%', minHeight: '30rem' } }, calendarPanel()), chores: choresView, rewards: rewardsView, photos: photosView, settings: settingsView };
+  const views = { home: homeView, calendar: () => h('div', { class: 'card', style: { height: '100%', minHeight: '30rem' } }, calendarPanel()), chores: choresView, rewards: rewardsView, lists: listsView, meals: mealsView, photos: photosView, settings: settingsView };
   v.replaceChildren((views[S.view] || homeView)());
   v.scrollTop = st;
+  if (S.refocus) { const el = v.querySelector(S.refocus); S.refocus = null; if (el) el.focus({ preventScroll: true }); }
   const body = v.querySelector('.calbody');
   if (body && S.cal.view === 'day' && !body.dataset.scrolled) { const t = body.querySelector('.nowline') || body.querySelector('.ev'); if (t) body.scrollTop = Math.max(0, t.getBoundingClientRect().top - body.getBoundingClientRect().top - body.clientHeight / 3); }
 }
@@ -485,7 +493,9 @@ function homeView() {
   const needsSetup = !S.state.people.length || !S.state.calendars.length || !set().weather;
   const side = h('div', { class: 'side' },
     needsSetup ? setupCard() : null,
+    mealsMini(),
     kids.length ? h('div', { class: 'kids' }, todayBoard(S.state.tasks, S.state.completions, kids, todayKey()).map((b) => kidCard(b))) : null,
+    listMini(),
     rewardsMini());
   if (isPhone()) return h('div', { class: 'home' }, side, h('div', { class: 'card' }, calendarPanel('agenda')));
   return h('div', { class: 'home' }, h('div', { class: 'card', style: { minHeight: 0 } }, calendarPanel()), side);
@@ -859,6 +869,201 @@ async function uploadPhotos(files) {
   }
   toast(`${ok} photo${ok === 1 ? '' : 's'} added`);
   refresh();
+}
+
+// ---------------- lists ----------------
+const COMMON_GROCERIES = ['Milk', 'Eggs', 'Bread', 'Bananas', 'Apples', 'Butter', 'Cheese', 'Yogurt', 'Chicken', 'Ground beef', 'Rice', 'Pasta', 'Cereal', 'Berries', 'Lettuce', 'Tomatoes', 'Onions', 'Potatoes', 'Carrots', 'Coffee', 'Snacks', 'Paper towels', 'Toilet paper', 'Dish soap'];
+EMOJI.lists = ['🛒', '📝', '✅', '🏠', '🧺', '🎒', '🎁', '🧳', '🛠️', '🐾', '💊', '🎄', '🎂', '📦', '🧽', '🌱'];
+EMOJI.food = ['🍲', '🍝', '🌮', '🍕', '🍔', '🌭', '🥗', '🍛', '🍜', '🍣', '🍗', '🥩', '🐟', '🥘', '🌯', '🥪', '🍳', '🥞', '🧇', '🥣', '🍞', '🥔', '🌽', '🍚', '🍤', '🥟', '🍱', '🍽️'];
+const itemsOf = (lid) => S.state.list_items.filter((i) => i.list_id === lid);
+const openItemsOf = (lid) => itemsOf(lid).filter((i) => !i.done);
+const groceryList = () => S.state.lists.find((l) => l.kind === 'grocery') || S.state.lists[0];
+function listsView() {
+  const lists = S.state.lists;
+  const out = h('div', { class: 'listsv' });
+  out.append(h('div', { class: 'section-title' }, E('🛒'), 'Lists', h('span', { class: 'grow' }),
+    h('button', { class: 'btn small', onclick: async () => { if (await needParent()) editList(null); } }, '+ New list')));
+  if (!lists.length) { out.append(h('div', { class: 'card empty-state' }, h('div', { class: 'big' }, '🛒'), h('p', null, 'No lists yet. Make a grocery list or a to-do list the whole family can add to.'), h('button', { class: 'btn primary', onclick: async () => { if (await needParent()) editList(null); } }, 'Create a list'))); return out; }
+  if (isPhone()) {
+    if (!lists.some((l) => l.id === S.listSel)) S.listSel = lists[0].id;
+    out.append(h('div', { class: 'list-tabs' }, lists.map((l) => h('button', { class: l.id === S.listSel ? 'on' : '', onclick: () => { S.listSel = l.id; renderView(); } }, E(l.emoji), l.name, h('span', { class: 'cnt' }, openItemsOf(l.id).length)))));
+    out.append(listCard(lists.find((l) => l.id === S.listSel)));
+  } else out.append(h('div', { class: 'lists-grid' }, lists.map((l) => listCard(l))));
+  return out;
+}
+function addBox(l, { onAdded, autofocus } = {}) {
+  const input = h('input', { type: 'text', 'data-list': l.id, placeholder: l.kind === 'grocery' ? 'Add an item… (milk, eggs)' : 'Add a to-do…', maxlength: 300, autocomplete: 'off', enterkeyhint: 'done',
+    onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } } });
+  const add = async (text) => {
+    const t = (text ?? input.value).trim(); if (!t) { input.focus(); return; }
+    if (text == null) input.value = '';
+    try { await api('POST', `/lists/${l.id}/items`, { text: t }); if (text == null) S.refocus = `input[data-list="${l.id}"]`; } catch (e) { handle(e); }
+    if (onAdded) onAdded(); else refresh();
+  };
+  const box = h('div', { class: 'addrow' }, input, h('button', { class: 'btn primary', onclick: () => add() }, 'Add'));
+  if (autofocus) setTimeout(() => input.focus(), 60);
+  const open = new Set(openItemsOf(l.id).map((i) => i.text.toLowerCase()));
+  const sugg = l.kind === 'grocery' ? COMMON_GROCERIES.filter((x) => !open.has(x.toLowerCase())).slice(0, isPhone() ? 8 : 10) : [];
+  return h('div', null, box, sugg.length ? h('div', { class: 'sugg' }, sugg.map((x) => h('button', { onclick: (e) => { e.currentTarget.remove(); add(x); } }, '+ ', x))) : null);
+}
+function listCard(l) {
+  const items = itemsOf(l.id), open = items.filter((i) => !i.done), done = items.filter((i) => i.done);
+  return h('div', { class: 'card listcard' },
+    h('div', { class: 'lhead' }, E(l.emoji), h('h3', null, l.name), h('span', { class: 'cnt' }, open.length ? `${open.length} to get`.replace('to get', l.kind === 'grocery' ? 'to get' : 'left') : 'All done'), h('span', { class: 'grow' }),
+      done.length ? h('button', { class: 'btn small', onclick: () => clearDone(l) }, `Clear ${done.length} checked`) : null,
+      h('button', { class: 'btn small', 'aria-label': `Edit ${l.name}`, onclick: async () => { if (await needParent()) editList(l); } }, '✏️')),
+    addBox(l),
+    h('div', { class: 'litems' }, open.map(itemRow), done.map(itemRow), !items.length ? h('p', { class: 'empty-note' }, l.kind === 'grocery' ? 'Nothing on the list. Tap a suggestion or type above.' : 'Nothing to do. Nice!') : null));
+}
+function itemRow(it) {
+  return h('div', { class: 'li' + (it.done ? ' done' : '') },
+    h('button', { class: 'lck', onclick: () => toggleItem(it) }, h('span', { class: 'box' }, it.done ? '✓' : ''), h('span', { class: 'lt' }, it.text, it.source ? h('small', null, it.source) : null)),
+    h('button', { class: 'lx', 'aria-label': `Remove ${it.text}`, onclick: () => deleteItem(it) }, '✕'));
+}
+async function toggleItem(it) {
+  it.done = !it.done; it.done_at = Date.now(); renderView();
+  try { await api('PUT', `/items/${it.id}`, { done: it.done }); } catch (e) { handle(e); }
+  refresh();
+}
+async function deleteItem(it) {
+  S.state.list_items = S.state.list_items.filter((x) => x.id !== it.id); renderView();
+  try { await api('DELETE', `/items/${it.id}`); } catch (e) { handle(e); }
+  refresh();
+}
+async function clearDone(l) {
+  S.state.list_items = S.state.list_items.filter((x) => !(x.list_id === l.id && x.done)); renderView();
+  try { const r = await api('POST', `/lists/${l.id}/clear`); toast(`Cleared ${r.removed} checked item${r.removed === 1 ? '' : 's'}`); } catch (e) { handle(e); }
+  refresh();
+}
+function editList(l) {
+  const f = l ? { ...l } : { name: '', emoji: '📝', kind: 'todo' };
+  formSheet(l ? `Edit ${l.name}` : 'New list', () => h('div', null,
+    field('Name', textInput(f, 'name', { maxlength: 40, placeholder: 'Costco, Target, Chores to do…' })),
+    field('Type', chipsInput(f, 'kind', [{ value: 'grocery', label: 'Shopping', emoji: '🛒' }, { value: 'todo', label: 'To-do', emoji: '📝' }]), 'Shopping lists show quick-add suggestions and can receive meal ingredients.'),
+    field('Icon', emojiInput(f, 'emoji', 'lists'))), {
+    onSave: async () => { if (!f.name.trim()) throw new Error('Give the list a name'); await api(l ? 'PUT' : 'POST', l ? `/lists/${l.id}` : '/lists', f); toast('Saved'); },
+    onDelete: l ? async () => confirmBox(`Delete “${l.name}”?`, 'Everything on this list is deleted too.', 'Delete', true).then(async (ok) => { if (ok) await api('DELETE', `/lists/${l.id}`); return ok; }) : null,
+  });
+}
+function quickAdd(l) {
+  let m;
+  const body = h('div', null);
+  const draw = () => body.replaceChildren(h('h2', null, E(l.emoji), ' Add to ', l.name), addBox(l, { autofocus: !isPhone(), onAdded: async () => { await refresh(); toast('Added'); draw(); } }),
+    h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => { m.close(); go('lists'); } }, 'Open list'), h('span', { class: 'grow' }), h('button', { class: 'btn primary', onclick: () => m.close() }, 'Done')));
+  draw();
+  m = modal(body);
+}
+function listMini() {
+  const l = groceryList(); if (!l) return null;
+  const open = openItemsOf(l.id);
+  return h('div', { class: 'card mini-list' },
+    h('div', { class: 'section-title mini-title' }, E(l.emoji), l.name, h('span', { class: 'badge' }, open.length), h('span', { class: 'grow' }),
+      h('button', { class: 'btn small', onclick: () => quickAdd(l) }, '+ Add'), h('button', { class: 'btn small', onclick: () => go('lists') }, 'Open')),
+    open.length ? h('div', { class: 'litems' }, open.slice(0, 6).map(itemRow), open.length > 6 ? h('button', { class: 'more-link', onclick: () => go('lists') }, `+${open.length - 6} more`) : null) : h('p', { class: 'empty-note' }, 'The list is empty.'));
+}
+
+// ---------------- meal plan ----------------
+const SLOT = { breakfast: ['🥞', 'Breakfast'], lunch: ['🥪', 'Lunch'], dinner: ['🍲', 'Dinner'] };
+const mealSlots = () => (set().meal_slots && set().meal_slots.length ? set().meal_slots : ['dinner']);
+const mealOf = (day, slot) => S.state.meals.find((x) => x.day === day && x.slot === slot);
+function mealsView() {
+  const today = numFromKey(todayKey());
+  const start = S.mealStart ?? today;
+  const slots = mealSlots();
+  const days = Array.from({ length: 7 }, (_, i) => start + i);
+  const c1 = civil(start), c2 = civil(start + 6);
+  const label = start === today ? 'Next 7 days' : `${MON[c1.m - 1].slice(0, 3)} ${c1.d} – ${MON[c2.m - 1].slice(0, 3)} ${c2.d}`;
+  const nav = (d) => { S.mealStart = Math.max(today - 14, Math.min(today + 35, start + d)); renderView(); };
+  const out = h('div', { class: 'mealsv' });
+  out.append(h('div', { class: 'section-title' }, E('🍽️'), 'Meal plan', h('span', { class: 'muted-title' }, label), h('span', { class: 'grow' }),
+    h('button', { class: 'pill round', 'aria-label': 'Previous week', disabled: start <= today - 14, onclick: () => nav(-7) }, '‹'),
+    h('button', { class: 'pill', onclick: () => { S.mealStart = null; renderView(); } }, 'Today'),
+    h('button', { class: 'pill round', 'aria-label': 'Next week', disabled: start >= today + 35, onclick: () => nav(7) }, '›')));
+  out.append(h('div', { class: 'meal-tools' },
+    h('div', { class: 'chips' }, Object.entries(SLOT).map(([k, [ico, l]]) => h('button', { class: slots.includes(k) ? 'on' : '', onclick: async () => {
+      if (!(await needParent())) return;
+      const next = slots.includes(k) ? slots.filter((x) => x !== k) : [...slots, k];
+      if (!next.length) return toast('Keep at least one meal');
+      saveSettings({ meal_slots: next });
+    } }, E(ico), l))),
+    h('span', { class: 'grow' }),
+    S.state.lists.length ? h('button', { class: 'btn small', onclick: () => mealsToList(days.map(dayKeyFromNum)) }, '🛒 Add this week’s ingredients to a list') : null));
+  const grid = h('div', { class: 'meals-grid', style: { '--rows': slots.length } });
+  for (const n of days) {
+    const key = dayKeyFromNum(n), c = civil(n);
+    const col = h('div', { class: 'mday' + (n === today ? ' today' : '') }, h('div', { class: 'mdh' }, h('b', null, n === today ? 'Today' : n === today + 1 ? 'Tomorrow' : DOWL[weekday(n)]), h('span', null, `${MON[c.m - 1].slice(0, 3)} ${c.d}`)));
+    for (const slot of slots) {
+      const ml = mealOf(key, slot);
+      col.append(h('button', { class: 'meal' + (ml ? '' : ' empty'), onclick: () => (ml ? showMeal(key, slot) : editMeal(key, slot)) },
+        slots.length > 1 ? h('span', { class: 'ms' }, SLOT[slot][1]) : null,
+        ml ? [h('span', { class: 'me' }, ml.emoji || SLOT[slot][0]), h('span', { class: 'mt' }, ml.title), ml.ingredients.length ? h('small', null, `${ml.ingredients.length} ingredient${ml.ingredients.length === 1 ? '' : 's'}`) : null]
+          : h('span', { class: 'madd' }, '+ Add')));
+    }
+    grid.append(col);
+  }
+  out.append(grid);
+  return out;
+}
+function showMeal(day, slot) {
+  const ml = mealOf(day, slot); if (!ml) return editMeal(day, slot);
+  const n = numFromKey(day);
+  let m;
+  m = modal(h('div', null, h('div', { class: 'meal-hero' }, E(ml.emoji || SLOT[slot][0]), h('div', null, h('h2', null, ml.title), h('p', { class: 'muted' }, `${SLOT[slot][1]} · ${fmtDay(n)}`))),
+    ml.note ? h('p', null, ml.note) : null,
+    ml.ingredients.length ? h('div', null, h('b', null, 'Ingredients'), h('ul', { class: 'ing' }, ml.ingredients.map((x) => h('li', null, x)))) : h('p', { class: 'muted' }, 'No ingredients listed.'),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn', onclick: async () => { if (await needParent()) { m.close(true); editMeal(day, slot); } } }, 'Edit'),
+      h('span', { class: 'grow' }),
+      ml.ingredients.length && S.state.lists.length ? h('button', { class: 'btn primary', onclick: async () => { m.close(true); await mealsToList([day], slot); } }, '🛒 Add ingredients to list') : null,
+      h('button', { class: 'btn', onclick: () => m.close() }, 'Close'))));
+}
+async function editMeal(day, slot) {
+  if (!(await needParent())) return;
+  const ml = mealOf(day, slot);
+  const f = { day, slot, title: ml ? ml.title : '', emoji: ml ? ml.emoji : '', ingredients: ml ? ml.ingredients.join('\n') : '', note: ml ? ml.note : '' };
+  const favs = [];
+  for (const x of [...S.state.meals].reverse()) if (x.title && !favs.some((y) => y.title.toLowerCase() === x.title.toLowerCase())) favs.push(x);
+  let titleEl, ingEl, emojiBox;
+  formSheet(`${SLOT[slot][1]} · ${fmtDay(numFromKey(day))}`, () => {
+    titleEl = textInput(f, 'title', { maxlength: 80, placeholder: 'Tacos, spaghetti, leftovers…' });
+    ingEl = h('textarea', { rows: 5, placeholder: 'One per line, or separated by commas', oninput: (e) => (f.ingredients = e.target.value) }); ingEl.value = f.ingredients;
+    emojiBox = h('div', null, emojiInput(f, 'emoji', 'food'));
+    return h('div', null,
+      favs.length ? field('Recent meals', h('div', { class: 'chips' }, favs.slice(0, 10).map((x) => h('button', { type: 'button', onclick: () => { f.title = x.title; f.emoji = x.emoji; f.ingredients = x.ingredients.join('\n'); titleEl.value = f.title; ingEl.value = f.ingredients; emojiBox.replaceChildren(emojiInput(f, 'emoji', 'food')); } }, x.emoji ? E(x.emoji) : null, x.title)))) : null,
+      field('Meal', titleEl), field('Icon', emojiBox), field('Ingredients (optional)', ingEl, 'Send them to a shopping list from the meal or the week.'),
+      field('Note (optional)', textInput(f, 'note', { maxlength: 200, placeholder: 'Thaw chicken in the morning' })));
+  }, {
+    onSave: async () => { if (!f.title.trim()) throw new Error('Type a meal, or use Delete to clear it'); await api('PUT', '/meals', f); toast('Meal saved'); },
+    onDelete: ml ? async () => { await api('PUT', '/meals', { day, slot, title: '' }); toast('Meal cleared'); return true; } : null,
+  });
+}
+async function pickList(title) {
+  const lists = S.state.lists; if (lists.length <= 1) return lists[0] || null;
+  return new Promise((resolve) => {
+    let picked = null;
+    const m = modal(h('div', null, h('h2', null, title), h('div', { class: 'setup-list' }, lists.map((l) => h('button', { onclick: () => { picked = l; m.close(); } }, E(l.emoji), l.name, h('span', { class: 'grow' }), h('small', null, `${openItemsOf(l.id).length} items`))))), { cancel: true, onClose: () => resolve(picked) });
+  });
+}
+async function mealsToList(days, slot) {
+  const want = S.state.meals.filter((x) => days.includes(x.day) && (!slot || x.slot === slot) && x.ingredients.length);
+  if (!want.length) return toast('No ingredients on those meals yet');
+  const l = await pickList('Add ingredients to which list?'); if (!l) return;
+  try {
+    const r = await api('POST', '/meals/to-list', { list_id: l.id, days, slot });
+    toast(r.added ? `Added ${r.added} item${r.added === 1 ? '' : 's'} to ${r.list}${r.skipped ? ` (${r.skipped} already there)` : ''}` : `Everything is already on ${r.list}`, 4000);
+  } catch (e) { handle(e); }
+  refresh();
+}
+function mealsMini() {
+  const t = numFromKey(todayKey()), slots = mealSlots();
+  const rows = [0, 1, 2].map((d) => {
+    const key = dayKeyFromNum(t + d);
+    const ms = slots.map((sl) => [sl, mealOf(key, sl)]).filter(([, x]) => x);
+    return h('button', { class: 'mm-row', onclick: () => (ms.length === 1 ? showMeal(key, ms[0][0]) : go('meals')) },
+      h('span', { class: 'mm-day' }, d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : DOW[weekday(t + d)]),
+      ms.length ? h('span', { class: 'mm-meals' }, ms.map(([sl, x]) => h('span', { class: 'mm-m' }, E(x.emoji || SLOT[sl][0]), ' ', x.title))) : h('span', { class: 'mm-none' }, 'Not planned'));
+  });
+  return h('div', { class: 'card mini-meals' }, h('div', { class: 'section-title mini-title' }, E('🍽️'), 'Meals', h('span', { class: 'grow' }), h('button', { class: 'btn small', onclick: () => go('meals') }, 'Plan')), rows);
 }
 
 // ---------------- settings ----------------
