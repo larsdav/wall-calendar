@@ -468,3 +468,13 @@ ul.ing { margin: .4rem 0 0; padding-left: 1.3rem; columns: 2; font-size: 1.05rem
 .slidepick { margin-bottom: .3rem; }
 .cd.word .cdn { font-size: 1.05rem; padding: .55rem .7rem; }
 @media (max-width: 700px) { .photos-grid { grid-template-columns: repeat(2, 1fr); gap: .4rem; } .cd .cdt { font-size: 1rem; } }
+
+/* ---------- family calendar ---------- */
+.calbar .addev { background: var(--accent); color: var(--accent-ink); font-weight: 800; padding: 0 1.1rem; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; align-items: end; }
+.row2[hidden], .field[hidden] { display: none; }
+.evform input[type=date], .evform input[type=time] { width: 100%; min-height: 3.2rem; font-size: 1.1rem; }
+.evform .row2 .toggle { min-height: 3.2rem; }
+.feedrow { flex-wrap: wrap; gap: .5rem; }
+.feedurl { font-size: .85rem; word-break: break-all; background: var(--panel2); padding: .5rem .7rem; border-radius: 10px; min-width: 14rem; user-select: all; }
+.srow > .toggle { width: auto; flex: none; }

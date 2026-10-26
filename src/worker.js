@@ -4,6 +4,7 @@ import { expandIcs, normalizeFeedUrl } from './ics.js';
 import { dayKey, validTz } from './tz.js';
 import { json, err, all, first, run, J, body } from './util.js';
 import { featureApi, featureState } from './features.js';
+import { expandFamily, familyIcs } from './family.js';
 import { balances, rewardProgress, checkRedeem, isDue, cleanTask, cleanReward, cleanText, cleanEmoji, cleanMealSlots, cleanIds, COLOR_RE } from './logic.js';
 
 const DEV_COOKIE = '__Host-wc-dev';
@@ -253,6 +254,8 @@ async function api(req, env, ctx, url) {
       if (e.a ? e.e <= fromDay || e.s >= toDay : e.e < from || e.s >= to) continue;
       events.push({ ...e, c: c.id });
     }
+    const fam = await all(db, 'SELECT id, title, location, person_id, all_day, date, end_date, start_time, end_time, repeat, until FROM family_events WHERE date <= ? AND (repeat != \'none\' OR end_date >= ?)', toDay, fromDay);
+    events.push(...expandFamily(fam, from, to, s.tz));
     return json({ events, from, to });
   }
   let pm = /^\/photos\/(\d+)(\/thumb)?$/.exec(path);
@@ -353,6 +356,7 @@ async function api(req, env, ctx, url) {
       db.prepare('DELETE FROM ledger WHERE person_id = ?').bind(id),
       db.prepare('DELETE FROM routine_progress WHERE person_id = ?').bind(id),
       db.prepare('UPDATE countdowns SET person_id = NULL WHERE person_id = ?').bind(id),
+      db.prepare('UPDATE family_events SET person_id = NULL WHERE person_id = ?').bind(id),
       db.prepare('UPDATE calendars SET person_id = NULL WHERE person_id = ?').bind(id),
     ]);
     // drop from task/reward assignee lists
@@ -487,6 +491,15 @@ async function api(req, env, ctx, url) {
   if (path === '/sync' && m === 'POST') return json({ ok: true, results: await syncAll(env, { force: true }) });
   return err(404, 'Not found');
 }
+async function familyFeed(env, token) {
+  const row = await first(env.DB, "SELECT value FROM settings WHERE key = 'ics_token'");
+  if (!row || !row.value || !timingSafeEq(row.value, token)) return new Response('Not found', { status: 404 });
+  const { s } = await getSettings(env.DB);
+  const [rows, people] = await Promise.all([all(env.DB, 'SELECT * FROM family_events ORDER BY date, id'), all(env.DB, 'SELECT id, name FROM people')]);
+  const ics = familyIcs(rows, { tz: s.tz, name: `${s.family_name} (wall)`, people });
+  return new Response(ics, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store' } });
+}
+function timingSafeEq(a, b) { if (a.length !== b.length) return false; let x = 0; for (let i = 0; i < a.length; i++) x |= a.charCodeAt(i) ^ b.charCodeAt(i); return x === 0; }
 const putSettingRaw = (db, key, value) => run(db, 'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value);
 
 async function savePerson(db, id, b) {
@@ -511,6 +524,8 @@ export default {
     const url = new URL(req.url);
     try {
       if (url.pathname.startsWith('/api/')) return withSec(await api(req, env, ctx, url));
+      const fm = /^\/feed\/([A-Za-z0-9_-]{24,64})\.ics$/.exec(url.pathname);
+      if (fm && req.method === 'GET') return withSec(await familyFeed(env, fm[1]));
       let name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       let res = serveAsset(name, req);
       if (!res && !name.includes('.')) res = serveAsset('index.html', req);

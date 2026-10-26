@@ -7,6 +7,10 @@ It runs on **one Cloudflare Worker** with a **D1** database, all on the free tie
 ## What it does
 
 - **Calendar:** month, week, day and list views. Each calendar has its own color and can be toggled on the legend. Sources are ICS/webcal links, such as an iCloud public calendar or a Google "secret address in iCal format". The Worker refetches them every 10 minutes (cron) and expands recurring events (RRULE, EXDATE, RDATE, moved instances) in the family time zone (default `America/Chicago`). The top bar shows when calendars last synced.
+- **Family calendar:** tap **+ Event** (parent PIN) on the wall or a phone to add a timed or all-day event. Events can repeat weekly, monthly or yearly and can belong to one person or the whole family. They're stored in D1, merged into every view, and can be shared to phones as a private read-only `.ics` link (Settings). The **Everyone / person** chips filter the calendar to one person's calendars and events. Write-back into Google or iCloud: see [docs/external-calendar-writeback.md](docs/external-calendar-writeback.md).
+- **Countdowns:** on Home, e.g. "Disney trip in 55 days". Birthdays and holidays can repeat every year.
+- **Lists and meals:** shared grocery and to-do lists; no PIN needed to add or tick items. A weekly meal plan can send its ingredients to the grocery list.
+- **Routines and kid pages:** step-by-step morning and bedtime routines that kids tick through, and a page per kid with their routines, chores, rewards and stars.
 - **Family:** add, edit and remove people (name, color, emoji avatar, kid or parent) in Settings. No names are hardcoded.
 - **Chores, habits and activities:** each one has an icon, a star value, the kids it's assigned to, a time of day and a repeat (every day, school days, chosen weekdays, or once). Kids tap to finish one, get a celebration and earn stars. Tapping again undoes it. With **Parent approval** on, taps wait until a parent approves them.
 - **Stars and history:** every star is a ledger entry: earned, redeemed, or a parent adjustment with a note.
@@ -14,7 +18,7 @@ It runs on **one Cloudflare Worker** with a **D1** database, all on the free tie
   - *Per kid:* uses that kid's stars. It can be limited to stars from chosen chores or habits, e.g. "Good bedtime × 5 = ice cream".
   - *Family goal:* everyone's stars add up toward one goal. Redeeming it resets the goal and leaves personal balances alone.
   - Redeeming always needs the parent PIN and is logged.
-- **Photos:** uploaded from any phone or computer behind the PIN, resized in the browser (1920 px max) and stored in D1. They show as an idle slideshow and on the Photos page.
+- **Photos:** uploaded from any phone or computer behind the PIN, resized in the browser (1920 px max) and stored in D1. They show as an idle slideshow and on the Photos page. Photos can be sorted into albums, and the slideshow can be limited to chosen albums.
 - **Weather:** pick a city in Settings (Open-Meteo, no API key). Shows the current temperature, high/low and a 5-day forecast in °F or °C.
 - **Always-on screen care:** auto light/dark, night dimming between set hours (a tap wakes it for 2 minutes), a small pixel drift every 3 minutes, and an idle photo slideshow. The app reloads itself at 3:10am. If the internet drops, it keeps showing the last data it got, with an "Offline" banner.
 
@@ -40,9 +44,10 @@ Changes show up within about 10–20 minutes. Google and iCloud cache their feed
 npm install
 npm test                     # ICS/recurrence and star-ledger tests (node --test)
 npm run build                # inlines public/ into the Worker -> dist/worker.js
-npx wrangler d1 execute wall-calendar --local --file=schema.sql
+node scripts/migrate-local.mjs   # fresh local DB: schema.sql + migrations/*.sql
 npx wrangler dev --local     # http://localhost:8787
 node scripts/e2e.mjs http://localhost:8787 /tmp/wc --seed   # Playwright smoke test + screenshots (fresh DB)
+node scripts/e2e-features.mjs http://localhost:8787 /tmp/wcf --steps 1,2,3,4   # lists/meals, routines, countdowns/albums, family calendar
 ```
 
 Code map: `src/worker.js` (API, auth, sync), `src/ics.js` (ICS parser and RRULE expander), `src/tz.js` (time zones), `src/logic.js` (chores, stars and rewards, shared with the browser), `public/` (the app).
@@ -55,6 +60,7 @@ With Wrangler:
 npx wrangler login
 npx wrangler d1 create wall-calendar        # put the id in wrangler.toml
 npx wrangler d1 execute wall-calendar --remote --file=schema.sql
+for f in migrations/*.sql; do npx wrangler d1 execute wall-calendar --remote --file=$f; done   # new installs; upgrades: node scripts/mk-deploy.mjs migrate (tracks applied ones)
 npm run build && npx wrangler deploy        # also sets the */10 cron
 ```
 
@@ -78,6 +84,6 @@ Tested only in desktop Chromium, not on a Pi yet.
 
 ## Limits and next ideas
 
-- Read-only calendars: events are added in Apple or Google Calendar, not on the wall.
+- Linked Google and iCloud calendars are read-only. Events added on the wall go into the local family calendar, not into Google or iCloud, until write-back is set up (see docs/external-calendar-writeback.md).
 - No Google sign-in (OAuth). It uses the secret iCal link instead.
 - Weather is fetched by each screen directly from Open-Meteo.

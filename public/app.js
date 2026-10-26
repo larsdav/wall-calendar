@@ -338,10 +338,18 @@ function applyTheme() {
   const dim = night && Date.now() > wakeUntil && !isPhone() ? (set().night_dim || 0) / 100 : 0;
   $('#dim').style.opacity = dim;
 }
-function onActivity() {
+function onActivity(ev) {
   lastTouch = Date.now();
   if (isNight()) { wakeUntil = Date.now() + 2 * 60e3; applyTheme(); }
-  if (!$('#slideshow').hidden) stopSlideshow();
+  if (!$('#slideshow').hidden) {
+    stopSlideshow();
+    // the tap that closes the slideshow shouldn't also press whatever is underneath it
+    if (ev && ev.type !== 'keydown') {
+      const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+      document.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 700);
+    }
+  }
 }
 let driftStep = 0;
 function drift() {
@@ -715,13 +723,15 @@ function miniRow(r, person, have) {
 }
 
 // ---------------- calendar ----------------
+const FAMILY_COLOR = '#7C5CDB';
 const calById = (id) => S.state.calendars.find((c) => c.id === id);
-const colorOf = (e) => { const c = calById(e.c); return c ? c.color : '#888'; };
+const colorOf = (e) => { if (e.c === 0) { const p = e.p && personById(e.p); return p ? p.color : FAMILY_COLOR; } const c = calById(e.c); return c ? c.color : '#888'; };
 const evPerson = (e) => (e.p !== undefined ? e.p : (calById(e.c) || {}).person_id || null);
-const visibleEvents = () => S.events.filter((e) => (e.c === 0 || (!S.hidden.has(e.c) && calById(e.c))) && (!S.calPerson || evPerson(e) === S.calPerson));
+// Family-wide local events (no person) show under every person's filter; feed calendars without a person only under Everyone.
+const visibleEvents = () => S.events.filter((e) => !S.hidden.has(e.c) && (e.c === 0 || calById(e.c)) && (!S.calPerson || evPerson(e) === S.calPerson || (e.c === 0 && !e.p)));
 function personFilter() {
   const ids = new Set(S.state.calendars.filter((c) => c.enabled && c.person_id).map((c) => c.person_id));
-  for (const e of S.events) if (e.c === 0 && e.p) ids.add(e.p);
+  for (const e of S.events) if (e.c === 0 && e.p && personById(e.p)) ids.add(e.p);
   const people = S.state.people.filter((p) => ids.has(p.id));
   if (S.calPerson && !people.some((p) => p.id === S.calPerson)) S.calPerson = null;
   if (!people.length) return null;
@@ -763,13 +773,73 @@ function chip(ev, n, opts = {}) {
 }
 const fmtDay = (n) => { const c = civil(n); return `${DOW[weekday(n)]}, ${MON[c.m - 1].slice(0, 3)} ${c.d}`; };
 function showEvent(ev) {
-  const cal = calById(ev.c);
+  const cal = ev.c === 0 ? { name: 'Family calendar' + (ev.p && personById(ev.p) ? ` · ${personById(ev.p).name}` : ''), color: colorOf(ev) } : calById(ev.c);
   let when;
   if (ev.a) { const s = numFromKey(ev.s), e = numFromKey(ev.e) - 1; when = e > s ? `${fmtDay(s)} – ${fmtDay(e)} (all day)` : `${fmtDay(s)} · all day`; }
   else when = `${fmt({ weekday: 'long', month: 'long', day: 'numeric' }).format(new Date(ev.s))} · ${timeStr(ev.s)} – ${timeStr(ev.e)}`;
   const m = modal(h('div', null, h('h2', null, ev.t), h('p', null, when), ev.l ? h('p', null, '📍 ', ev.l) : null,
     cal ? h('p', { style: { color: 'var(--muted)' } }, h('span', { style: { display: 'inline-block', width: '.8rem', height: '.8rem', borderRadius: '50%', background: cal.color, marginRight: '.4rem' } }), cal.name) : null,
-    h('div', { class: 'actions' }, h('span', { class: 'grow' }), h('button', { class: 'btn primary', onclick: () => m.close() }, 'Close'))));
+    h('div', { class: 'actions' }, ev.c === 0 ? h('button', { class: 'btn', onclick: async () => { if (!(await needParent())) return; m.close(); openFamilyEvent(ev.fid); } }, '✏️ Edit') : null,
+      h('span', { class: 'grow' }), h('button', { class: 'btn primary', onclick: () => m.close() }, 'Close'))));
+}
+// ---------------- family calendar (local events) ----------------
+async function openFamilyEvent(id) {
+  try { const r = await api('GET', `/family-events/${id}`); editFamilyEvent(r.event); } catch (e) { handle(e); }
+}
+const REPEAT_OPTS = [{ value: 'none', label: 'Never' }, { value: 'weekly', label: 'Every week' }, { value: 'monthly', label: 'Every month' }, { value: 'yearly', label: 'Every year' }];
+function editFamilyEvent(ev, day) {
+  const f = ev ? { ...ev, all_day: !!ev.all_day, person_id: ev.person_id || 0 }
+    : { title: '', location: '', notes: '', person_id: S.calPerson || 0, all_day: false, date: day || todayKey(), end_date: day || todayKey(), start_time: '17:00', end_time: '18:00', repeat: 'none', until: '' };
+  if (f.end_date < f.date || !f.all_day) f.end_date = f.date;
+  let timeBox, endBox, untilBox;
+  const syncVis = () => { timeBox.hidden = f.all_day; endBox.hidden = !f.all_day; untilBox.hidden = f.repeat === 'none'; };
+  const dateIn = (key, attrs = {}) => h('input', { type: 'date', value: f[key], ...attrs, onchange: (e) => { f[key] = e.target.value; if (key === 'date' && f.end_date < f.date) { f.end_date = f.date; endIn.value = f.date; } } });
+  const timeIn = (key) => h('input', { type: 'time', value: f[key], step: 300, onchange: (e) => { f[key] = e.target.value; if (key === 'start_time' && f.end_time && f.end_time <= f.start_time) { const [hh, mm] = f.start_time.split(':').map(Number); f.end_time = `${String(Math.min(hh + 1, 23)).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; endTimeIn.value = f.end_time; } } });
+  const endIn = dateIn('end_date'), endTimeIn = timeIn('end_time');
+  formSheet(ev ? 'Edit event' : 'New family event', () => {
+    const allDay = toggleInput(f, 'all_day', 'All day');
+    allDay.addEventListener('click', () => setTimeout(syncVis));
+    const rep = chipsInput(f, 'repeat', REPEAT_OPTS);
+    rep.addEventListener('change', syncVis); rep.addEventListener('click', () => setTimeout(syncVis));
+    timeBox = h('div', { class: 'row2' }, field('Starts', timeIn('start_time')), field('Ends', endTimeIn));
+    endBox = field('Last day (for trips and multi-day events)', endIn);
+    untilBox = field('Stop repeating after (optional)', dateIn('until'));
+    const out = h('div', { class: 'evform' },
+      field('What', textInput(f, 'title', { maxlength: 80, placeholder: 'Soccer practice, Dentist, Grandma visits…' })),
+      h('div', { class: 'row2' }, field('Date', dateIn('date')), field('', allDay)),
+      timeBox, endBox,
+      S.state.people.length ? field('Who', chipsInput(f, 'person_id', [{ value: 0, label: 'Whole family', emoji: '👨‍👩‍👧‍👦' }, ...S.state.people.map((p) => ({ value: p.id, label: p.name, emoji: p.emoji }))])) : null,
+      field('Repeats', rep), untilBox,
+      field('Where (optional)', textInput(f, 'location', { maxlength: 120, placeholder: 'Address or place' })),
+      field('Notes (optional)', h('textarea', { rows: 2, maxlength: 1000, oninput: (e) => (f.notes = e.target.value) }, f.notes || '')));
+    syncVis();
+    return out;
+  }, {
+    onSave: async () => {
+      const body = { ...f, end_date: f.all_day ? f.end_date : f.date };
+      await api(ev ? 'PUT' : 'POST', ev ? `/family-events/${ev.id}` : '/family-events', body);
+      await loadEvents(true); toast('Saved to the family calendar');
+    },
+    onDelete: ev ? async () => confirmBox(`Delete “${ev.title}”?`, ev.repeat !== 'none' ? 'Every repeat is deleted.' : null, 'Delete', true).then(async (ok) => { if (ok) { await api('DELETE', `/family-events/${ev.id}`); await loadEvents(true); } return ok; }) : null,
+  });
+}
+async function phoneCalendarsBox(box) {
+  const wrap = h('div', null, h('p', { class: 'hint' }, 'Loading…'));
+  const draw = (r) => {
+    const link = r.token ? `${location.origin}/feed/${r.token}.ics` : null;
+    wrap.replaceChildren(
+      h('p', { class: 'hint' }, 'Events added here live on this wall. To see them on phones, subscribe to this private link in Google Calendar (Other calendars → From URL) or on iPhone (Settings → Calendar → Accounts → Add Subscribed Calendar). Phones get a read-only copy that refreshes every few hours.'),
+      link ? h('div', { class: 'srow feedrow' }, h('code', { class: 'grow feedurl' }, link),
+        h('button', { class: 'btn small', onclick: async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { toast('Select the link and copy it'); } } }, 'Copy'),
+        h('button', { class: 'btn small', onclick: async () => { if (await confirmBox('Make a new link?', 'Phones using the old link stop updating until you subscribe again.', 'New link', true)) { try { draw(await api('POST', '/family-feed')); } catch (e) { handle(e); } } } }, 'New link'),
+        h('button', { class: 'btn small danger', onclick: async () => { if (await confirmBox('Turn off the phone link?', null, 'Turn off', true)) { try { draw(await api('DELETE', '/family-feed')); } catch (e) { handle(e); } } } }, 'Turn off'))
+        : h('button', { class: 'btn small primary', onclick: async () => { try { draw(await api('POST', '/family-feed')); } catch (e) { handle(e); } } }, 'Create phone link'),
+      h('div', { class: 'srow' }, h('div', { class: 'grow' }, h('b', null, 'Add to Google Calendar or iCloud directly'),
+        h('small', null, r.writeback && (r.writeback.google || r.writeback.icloud) ? `Credentials found (${[r.writeback.google && 'Google', r.writeback.icloud && 'iCloud'].filter(Boolean).join(', ')}). Two-way write-back is not switched on in this version yet.` : 'Not set up. Needs a Google sign-in client or an iCloud app-specific password; see docs/external-calendar-writeback.md.')),
+        h('span', { class: 'badge' }, r.writeback && (r.writeback.google || r.writeback.icloud) ? 'Ready to enable' : 'Setup needed')));
+  };
+  try { draw(await api('GET', '/family-feed')); } catch (e) { if (!e.cancelled) wrap.replaceChildren(h('p', { class: 'hint' }, 'Could not load.')); }
+  box.append(wrap);
 }
 function calendarPanel(forceView) {
   if (forceView) S.cal.view = forceView;
@@ -797,16 +867,19 @@ function calendarPanel(forceView) {
     h('button', { class: 'pill round', 'aria-label': 'Previous', onclick: () => step(-1) }, '‹'),
     h('button', { class: 'pill', onclick: () => { S.cal.anchor = null; rerender(); } }, 'Today'),
     h('button', { class: 'pill round', 'aria-label': 'Next', onclick: () => step(1) }, '›'),
+    h('button', { class: 'pill addev', onclick: async () => { if (await needParent()) editFamilyEvent(null, view === 'day' || a !== today ? dayKeyFromNum(a) : todayKey()); } }, '+ Event'),
     forceView ? null : h('div', { class: 'seg' }, views.map(([v, l]) => h('button', { class: view === v ? 'on' : '', onclick: () => { S.cal.view = v; rerender(); } }, l))));
   const cals = S.state.calendars.filter((x) => x.enabled);
-  const legend = cals.length > 1 ? h('div', { class: 'legend' }, cals.map((x) => h('button', { class: S.hidden.has(x.id) ? 'off' : '', onclick: () => { S.hidden.has(x.id) ? S.hidden.delete(x.id) : S.hidden.add(x.id); localStorage.setItem(LS.hidden, JSON.stringify([...S.hidden])); renderView(); } }, h('i', { style: { background: x.color } }), x.name))) : null;
+  const hasFamily = S.events.some((x) => x.c === 0);
+  const legendCals = hasFamily ? [...cals, { id: 0, name: 'Family', color: FAMILY_COLOR }] : cals;
+  const legend = legendCals.length > 1 ? h('div', { class: 'legend' }, legendCals.map((x) => h('button', { class: S.hidden.has(x.id) ? 'off' : '', onclick: () => { S.hidden.has(x.id) ? S.hidden.delete(x.id) : S.hidden.add(x.id); localStorage.setItem(LS.hidden, JSON.stringify([...S.hidden])); renderView(); } }, h('i', { style: { background: x.color } }), x.name))) : null;
   let body;
-  if (!cals.length) body = h('div', { class: 'empty-state' }, h('div', { class: 'big' }, '📅'), h('p', null, 'No calendars yet.'), h('button', { class: 'btn primary', onclick: async () => { if (await needParent()) { go('settings'); editCalendar(null); } } }, 'Add a calendar'));
+  if (!cals.length && !hasFamily && view === 'agenda') body = h('div', { class: 'empty-state' }, h('div', { class: 'big' }, '📅'), h('p', null, 'No events yet. Add one with “+ Event”, or link a Google or iCloud calendar.'), h('button', { class: 'btn primary', onclick: async () => { if (await needParent()) { go('settings'); editCalendar(null); } } }, 'Link a calendar'));
   else if (view === 'month') body = monthView(s, e, a, today);
   else if (view === 'week') body = weekView(s, today);
   else if (view === 'day') body = dayView(a, today);
   else body = agendaView(s, e, today);
-  const pf = cals.length ? personFilter() : null;
+  const pf = personFilter();
   return h('div', { class: 'cal' }, bar, pf || legend ? h('div', { class: 'calfilters' }, pf, legend) : null, h('div', { class: 'calbody' }, body));
 }
 function monthView(s, e, a, today) {
@@ -1274,6 +1347,9 @@ function settingsView() {
     S.state.calendars.length ? S.state.calendars.map((c) => h('div', { class: 'srow' }, h('span', { style: { width: '1.4rem', height: '1.4rem', borderRadius: '50%', background: c.color, flex: 'none' } }),
       h('div', { class: 'grow' }, h('b', null, c.name, c.enabled ? '' : ' (hidden)'), h('small', { style: c.error ? { color: 'var(--bad)' } : null }, c.error ? `⚠ ${c.error}` : `${c.event_count} events · synced ${ago(c.ok_at)}`)),
       h('button', { class: 'btn small', onclick: () => editCalendar(c) }, 'Edit'))) : h('p', null, 'No calendars yet.')));
+  const fam = box('📲', 'Family calendar on phones', h('button', { class: 'btn small', onclick: () => editFamilyEvent(null) }, '+ Event'));
+  phoneCalendarsBox(fam);
+  out.append(fam);
   out.append(box('✅', 'Chores & habits', h('button', { class: 'btn small', onclick: () => editTask(null) }, '+ Add'),
     h('p', { class: 'hint' }, `${S.state.tasks.length} set up. Manage them on the Chores page.`),
     h('div', { class: 'srow' }, h('div', { class: 'grow' }, h('b', null, 'Parent approval for stars'), h('small', null, 'When on, kids\u2019 taps wait for a parent before stars are added.')),

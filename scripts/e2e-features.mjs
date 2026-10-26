@@ -325,6 +325,125 @@ if (steps.includes(3)) {
   await open(phone, 'home', '.mini-cd'); await shot(phone, 'home-390', true);
 }
 
+// ---------- step 4: local family calendar + phone feed ----------
+if (steps.includes(4)) {
+  await lockState(page, false);
+  for (const e of (await api(page, 'GET', '/family-events')).events) await api(page, 'DELETE', `/family-events/${e.id}`);
+  st = await state();
+  const [emma] = kids, mom = st.people.find((p) => p.name === 'Mom') || st.people.find((p) => p.role === 'parent');
+  const addDays = (n) => new Date(Date.parse(today + 'T12:00:00Z') + n * 86400e3).toISOString().slice(0, 10);
+  const ev = (sel, txt) => page.locator(`.calbody :is(.ev, .chip):has-text("${txt}")`);
+  await lockState(page, true);
+  await page.evaluate(() => localStorage.removeItem('wc.calPerson'));
+  await open(page, 'calendar', '.calbar .addev');
+  await page.click('.calbar .addev'); await page.waitForTimeout(400);
+  check('+ Event asks for the PIN when locked', await page.isVisible('.pin .pad'));
+  await typePin(page);
+  await page.waitForSelector('.evform', { timeout: 8000 });
+  await page.fill('.evform input[placeholder^="Soccer"]', 'Soccer practice');
+  await page.fill('.evform input[type=date] >> nth=0', addDays(1));
+  await page.fill('.evform input[type=time] >> nth=0', '17:30');
+  await page.fill('.evform input[type=time] >> nth=1', '18:30');
+  await page.click(`.evform .chips button:has-text("${emma.name}")`);
+  await page.click('.evform .chips button:has-text("Every week")');
+  await page.click('.sheet .btn.primary:has-text("Save")');
+  await page.click('.seg button:has-text("Week")');
+  await page.waitForSelector('.calbody :is(.ev, .chip):has-text("Soccer practice")', { timeout: 10000 });
+  check('event created on the wall appears in the week view', true);
+  const col = await ev(0, 'Soccer practice').first().evaluate((el) => getComputedStyle(el).getPropertyValue('--c').trim());
+  check('event takes the person’s color', col.toLowerCase() === emma.color.toLowerCase(), `${col} vs ${emma.color}`);
+  // all-day multi-day family event
+  await page.click('.calbar .addev'); await page.waitForSelector('.evform');
+  await page.fill('.evform input[placeholder^="Soccer"]', 'Grandma visits');
+  await page.fill('.evform input[type=date] >> nth=0', addDays(2));
+  await page.click('.evform .toggle:has-text("All day")');
+  await page.fill('.evform .field:not([hidden]) input[type=date] >> nth=1', addDays(4));
+  await page.click('.sheet .btn.primary:has-text("Save")');
+  await page.click('.seg button:has-text("Month")');
+  await page.waitForSelector('.calbody .chip:has-text("Grandma visits")', { timeout: 10000 });
+  const gCount = await page.locator('.calbody .chip:has-text("Grandma visits")').count();
+  check('multi-day all-day event spans its days in month view', gCount >= 1, `${gCount} chip(s)`);
+  await shot(page, 'calendar-family-1920');
+  // repeats show next week
+  const fam = (await api(page, 'GET', '/family-events')).events;
+  const soccerId = fam.find((e) => e.title === 'Soccer practice').id;
+  const evs = await page.evaluate(async ([a, b]) => (await (await fetch(`/api/events?from=${a}&to=${b}`)).json()).events.filter((e) => e.c === 0), [Date.now(), Date.now() + 22 * 86400e3]);
+  const soccerDays = evs.filter((e) => e.fid === soccerId).map((e) => e.occ);
+  check('weekly event repeats every week', soccerDays.length === 3 && soccerDays[0] === addDays(1) && soccerDays[1] === addDays(8), soccerDays.join(','));
+  const soc = evs.find((e) => e.fid === soccerId);
+  check('time is kept in the family time zone', new Date(soc.s).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' }) === '5:30 PM');
+  // person filter
+  await page.click(`.pfilter button:has-text("${mom.name}")`); await page.waitForTimeout(600);
+  const momSees = [await ev(0, 'Soccer practice').count(), await ev(0, 'Grandma visits').count()];
+  await page.click(`.pfilter button:has-text("${emma.name}")`); await page.waitForTimeout(600);
+  const emmaSees = [await ev(0, 'Soccer practice').count(), await ev(0, 'Grandma visits').count()];
+  check('person filter: Emma’s event hidden for Mom, family-wide event shown to everyone', momSees[0] === 0 && momSees[1] > 0 && emmaSees[0] > 0 && emmaSees[1] > 0, `mom ${momSees} emma ${emmaSees}`);
+  await page.click('.pfilter button:has-text("Everyone")');
+  // edit from the event popup
+  await ev(0, 'Soccer practice').first().click();
+  await page.click('.sheet .btn:has-text("Edit")');
+  await page.waitForSelector('.evform');
+  await page.fill('.evform input[placeholder^="Soccer"]', 'Soccer game');
+  await page.click('.sheet .btn.primary:has-text("Save")');
+  await page.waitForSelector('.calbody .chip:has-text("Soccer game")', { timeout: 10000 });
+  await page.waitForTimeout(800);
+  const after = await page.evaluate(async ([a, b]) => (await (await fetch(`/api/events?from=${a}&to=${b}`)).json()).events.filter((e) => e.c === 0), [Date.now(), Date.now() + 22 * 86400e3]);
+  const renamed = [after.filter((e) => e.t === 'Soccer game').length, after.filter((e) => e.t === 'Soccer practice').length];
+  check('edit an event from its popup (all repeats renamed)', renamed[0] === 3 && renamed[1] === 0 && (await ev(0, 'Soccer game').count()) >= 1, `${renamed}`);
+  // phone: add and delete with the PIN
+  await open(phone, 'calendar', '.calbar .addev');
+  await lockState(phone, true);
+  await open(phone, 'calendar', '.calbar .addev');
+  await phone.click('.calbar .addev'); await phone.waitForTimeout(400);
+  if (await phone.isVisible('.pin .pad')) await typePin(phone);
+  await phone.waitForSelector('.evform', { timeout: 8000 });
+  await phone.fill('.evform input[placeholder^="Soccer"]', 'Dentist');
+  await phone.fill('.evform input[type=date] >> nth=0', addDays(3));
+  await phone.fill('.evform input[type=time] >> nth=0', '09:00');
+  await phone.fill('.evform input[type=time] >> nth=1', '10:00');
+  await phone.fill('.evform input[placeholder^="Address"]', 'Smile Dental, 123 Main St');
+  await phone.waitForTimeout(700); await shot(phone, 'event-form-390');
+  await phone.click('.sheet .btn.primary:has-text("Save")');
+  await phone.waitForSelector('.calbody :is(.ev, .chip):has-text("Dentist")', { timeout: 10000 });
+  check('event created from a phone with the PIN', true);
+  await shot(phone, 'calendar-390');
+  await page.reload(); await page.waitForSelector('.calbody'); await page.waitForTimeout(1200);
+  check('phone’s event shows on the wall', (await ev(0, 'Dentist').count()) > 0);
+  await phone.locator('.calbody :is(.ev, .chip):has-text("Dentist")').first().click();
+  check('event popup shows the place', await phone.isVisible('.sheet :text("Smile Dental")'));
+  await phone.click('.sheet .btn:has-text("Edit")'); await phone.waitForSelector('.evform');
+  await phone.click('.sheet .btn.danger:has-text("Delete")');
+  await phone.locator('.btn.danger:has-text("Delete")').last().click();
+  await phone.waitForTimeout(2000);
+  check('delete an event', (await phone.locator('.calbody :has-text("Dentist")').count()) === 0);
+  // validation
+  const nErr4 = errors.length;
+  const bad = await page.evaluate(async () => (await fetch('/api/family-events', { method: 'POST', headers: { 'x-wc': '1', 'content-type': 'application/json' }, body: JSON.stringify({ title: '', date: '2026-01-01' }) })).status);
+  await page.waitForTimeout(300); errors.splice(nErr4); // the expected 400 is logged by Chrome
+  check('server rejects an event without a name', bad === 400);
+  await lockState(page, false);
+  // phone feed link (settings)
+  await open(page, 'settings', '.settings');
+  await api(page, 'DELETE', '/family-feed');
+  await open(page, 'settings', 'button:has-text("Create phone link")');
+  await page.click('button:has-text("Create phone link")');
+  await page.waitForSelector('.feedurl', { timeout: 8000 });
+  const link = (await page.textContent('.feedurl')).trim();
+  const r1 = await fetch(link); const ics = await r1.text();
+  check('phone subscribe link serves an .ics with the events', r1.ok && /text\/calendar/.test(r1.headers.get('content-type')) && ics.includes(`SUMMARY:Soccer game (${emma.name})`) && ics.includes('RRULE:FREQ=WEEKLY') && ics.includes('SUMMARY:Grandma visits'), `${r1.status}`);
+  await page.locator('.sbox:has(.feedurl)').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(700); await shot(page, 'settings-feed-1920');
+  await page.click('.feedrow button:has-text("New link")'); await page.click('.sheet .btn.danger:has-text("New link")');
+  await page.waitForFunction((old) => document.querySelector('.feedurl') && document.querySelector('.feedurl').textContent.trim() !== old, link, { timeout: 8000 });
+  check('old link stops working after making a new one', (await fetch(link)).status === 404);
+  check('a made-up feed link is refused', (await fetch(base + '/feed/' + 'x'.repeat(32) + '.ics')).status === 404);
+  await lockState(page, true);
+  const locked = await page.evaluate(async () => (await fetch('/api/family-events')).status);
+  check('family event list needs the PIN', locked === 403);
+  await page.evaluate(() => localStorage.setItem('wc.calPerson', ''));
+  await open(page, 'home', '.calbody'); await shot(page, 'home-1920');
+}
+
 const extra = process.env.E2E_EXTRA ? await import(process.env.E2E_EXTRA) : null;
 if (extra) await extra.default({ page, phone, api, state, check, open, shot, lockState, typePin, steps, today, kids, base });
 

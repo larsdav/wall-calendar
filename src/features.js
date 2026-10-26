@@ -2,6 +2,7 @@
 import { json, err, all, first, run, J, body } from './util.js';
 import { cleanText, cleanEmoji, splitItems, newIngredients, cleanMeal, isDue, tickStep, cleanCountdown, cleanIds } from './logic.js';
 import { dayKey } from './tz.js';
+import { cleanFamilyEvent } from './family.js';
 
 const MAX_LISTS = 12, MAX_ITEMS = 300;
 const dayAdd = (k, n) => new Date(Date.parse(k + 'T00:00:00Z') + n * 86400e3).toISOString().slice(0, 10);
@@ -20,6 +21,8 @@ export async function featureState(db, s, today) {
   return { countdowns: countdowns.map((c) => ({ ...c, yearly: !!c.yearly })), albums, photo_albums: photoAlbums.map((r) => [r.photo_id, r.album_id]), routine_progress: progress.map((r) => ({ ...r, done: J(r.done, []) })), lists, list_items: items.map((i) => ({ ...i, done: !!i.done })), meals: meals.map((m) => ({ ...m, ingredients: J(m.ingredients, []) })) };
 }
 
+const personIds = async (db) => (await all(db, 'SELECT id FROM people')).map((r) => r.id);
+
 async function addItems(db, listId, texts, source) {
   const n = await first(db, 'SELECT COUNT(*) AS n FROM list_items WHERE list_id = ? AND done = 0', listId);
   if (n.n + texts.length > MAX_ITEMS) throw Object.assign(new Error(`A list can hold ${MAX_ITEMS} items`), { status: 400 });
@@ -30,9 +33,59 @@ async function addItems(db, listId, texts, source) {
 }
 
 /** Returns a Response for feature routes, or null when the path isn't ours. Device auth is already checked. */
-export async function featureApi({ req, db, path, m, s, parent }) {
+export async function featureApi({ req, db, env, path, m, s, parent }) {
   const needParent = () => (parent ? null : err(403, 'parent'));
   let pm;
+
+  // ----- family calendar (local events; PIN to create/edit)
+  if (path === '/family-events' && m === 'GET') {
+    if (needParent()) return needParent();
+    return json({ events: await all(db, 'SELECT * FROM family_events ORDER BY date, id') });
+  }
+  if (path === '/family-events' && m === 'POST') {
+    if (needParent()) return needParent();
+    const n = await first(db, 'SELECT COUNT(*) AS n FROM family_events');
+    if (n.n >= 2000) return err(400, 'The family calendar is full');
+    const c = cleanFamilyEvent(await body(req), await personIds(db));
+    if (c.error) return err(400, c.error);
+    const v = c.value, now = Date.now();
+    const id = ((await first(db, 'SELECT MAX(id) AS id FROM family_events')).id || 0) + 1;
+    await run(db, 'INSERT INTO family_events (id, title, location, notes, person_id, all_day, date, end_date, start_time, end_time, repeat, until, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      id, v.title, v.location, v.notes, v.person_id, v.all_day, v.date, v.end_date, v.start_time, v.end_time, v.repeat, v.until, now, now);
+    return json({ ok: true, id });
+  }
+  if ((pm = /^\/family-events\/(\d+)$/.exec(path))) {
+    if (needParent()) return needParent();
+    const ev = await first(db, 'SELECT * FROM family_events WHERE id = ?', +pm[1]);
+    if (!ev) return err(404, 'That event was deleted');
+    if (m === 'GET') return json({ event: ev });
+    if (m === 'DELETE') { await run(db, 'DELETE FROM family_events WHERE id = ?', ev.id); return json({ ok: true }); }
+    if (m === 'PUT') {
+      const c = cleanFamilyEvent(await body(req), await personIds(db));
+      if (c.error) return err(400, c.error);
+      const v = c.value;
+      await run(db, 'UPDATE family_events SET title = ?, location = ?, notes = ?, person_id = ?, all_day = ?, date = ?, end_date = ?, start_time = ?, end_time = ?, repeat = ?, until = ?, updated_at = ? WHERE id = ?',
+        v.title, v.location, v.notes, v.person_id, v.all_day, v.date, v.end_date, v.start_time, v.end_time, v.repeat, v.until, Date.now(), ev.id);
+      return json({ ok: true });
+    }
+  }
+  // subscribe link for phone calendars (read-only .ics) and external write-back status
+  if (path === '/family-feed' && (m === 'GET' || m === 'POST' || m === 'DELETE')) {
+    if (needParent()) return needParent();
+    if (m === 'DELETE') { await run(db, "DELETE FROM settings WHERE key = 'ics_token'"); return json({ token: null }); }
+    let row = await first(db, "SELECT value FROM settings WHERE key = 'ics_token'");
+    if (m === 'POST') {
+      const b = new Uint8Array(24); crypto.getRandomValues(b);
+      const token = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      await run(db, "INSERT INTO settings (key, value) VALUES ('ics_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", token);
+      row = { value: token };
+    }
+    const e = env || {};
+    return json({ token: row ? row.value : null, writeback: {
+      google: !!(e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET && e.GOOGLE_REFRESH_TOKEN),
+      icloud: !!(e.ICLOUD_APPLE_ID && e.ICLOUD_APP_PASSWORD),
+    } });
+  }
 
   // ----- routines: kids tick steps (today only, no PIN); finishing the routine goes through /complete like any chore
   if (path === '/routine/step' && m === 'POST') {
