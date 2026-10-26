@@ -1,0 +1,15 @@
+# Local `wrangler dev` and `wrangler deploy` config. The live copy was deployed through the Cloudflare API (scripts/mk-deploy.mjs)
+# with the same settings. To deploy your own copy, create a D1 database and put its id below.
+name = "wall-calendar"
+main = "dist/worker.js"
+compatibility_date = "2026-05-01"
+workers_dev = true
+preview_urls = false
+
+[triggers]
+crons = ["*/10 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wall-calendar"
+database_id = "f4704ed2-6c48-41f5-8dd2-34e0c535e42e"
