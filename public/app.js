@@ -659,9 +659,9 @@ function monthView(s, e, a, today) {
   const maxChips = 2; // a third row would be clipped at 1080p; the rest go in "+N more"
   for (let n = s; n < e; n++) {
     const list = map.get(n);
-    const cell = h('div', { class: 'mcell' + (civil(n).m !== m ? ' other' : '') + (n === today ? ' today' : ''), onclick: () => { S.cal.anchor = n; S.cal.view = 'day'; renderView(); } }, h('div', { class: 'num' }, civil(n).d));
+    const cell = h('div', { class: 'mcell' + (civil(n).m !== m ? ' other' : '') + (n === today ? ' today' : ''), onclick: () => { S.cal.anchor = n; S.cal.view = 'day'; renderView(); } },
+      h('div', { class: 'mhead' }, h('div', { class: 'num' }, civil(n).d), list.length > maxChips ? h('div', { class: 'more' }, `+${list.length - maxChips} more`) : null));
     list.slice(0, maxChips).forEach((ev) => cell.append(phone ? h('div', { class: 'chip' + (ev.a ? ' allday' : ''), style: { '--c': colorOf(ev), padding: '0 .2rem', fontSize: '.68rem' } }, h('span', { class: 'n' }, ev.t)) : chip(ev, n)));
-    if (list.length > maxChips) cell.append(h('div', { class: 'more' }, `+${list.length - maxChips} more`));
     grid.append(cell);
   }
   return grid;
