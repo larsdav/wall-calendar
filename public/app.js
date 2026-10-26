@@ -656,7 +656,7 @@ function monthView(s, e, a, today) {
   const ws = set().week_start, m = civil(a).m, phone = isPhone();
   const grid = h('div', { class: 'month has-dow', style: { gridTemplateRows: `2rem repeat(6, minmax(${phone ? '3.8rem' : '5.5rem'}, 1fr))` } });
   for (let i = 0; i < 7; i++) grid.append(h('div', { class: 'dow' }, DOW[(i + ws) % 7]));
-  const maxChips = phone ? 2 : 3;
+  const maxChips = 2; // a third row would be clipped at 1080p; the rest go in "+N more"
   for (let n = s; n < e; n++) {
     const list = map.get(n);
     const cell = h('div', { class: 'mcell' + (civil(n).m !== m ? ' other' : '') + (n === today ? ' today' : ''), onclick: () => { S.cal.anchor = n; S.cal.view = 'day'; renderView(); } }, h('div', { class: 'num' }, civil(n).d));

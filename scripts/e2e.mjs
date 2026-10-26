@@ -10,13 +10,23 @@ const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 const typePin = async (pin) => { for (const d of pin) await page.click(`.pin .pad button[aria-label="${d}"]`); await page.click('.pin .pad button[aria-label="ok"]'); };
+const setLock = async (locked) => {
+  for (let i = 0; i < 4; i++) {
+    const t = await page.textContent('#lockbtn');
+    if (locked === t.includes('Parent')) return;
+    await page.click('#lockbtn');
+    if (!locked) { await page.waitForSelector('.pin .pad', { timeout: 5000 }).catch(() => {}); if (await page.isVisible('.pin .pad')) await typePin(PIN); }
+    await page.waitForTimeout(1200);
+  }
+  throw new Error('could not set lock=' + locked);
+};
 const api = (method, path, body) => page.evaluate(async ([method, path, body]) => {
   const r = await fetch('/api' + path, { method, headers: { 'x-wc': '1', 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json(); if (!r.ok) throw new Error(path + ': ' + j.error); return j;
 }, [method, path, body]);
 
 await page.goto(base);
-await page.waitForSelector('.boot');
+await page.waitForSelector('.rail, button:has-text("Enter PIN"), button:has-text("Set parent PIN")');
 await page.screenshot({ path: `${out}-firstrun.png` });
 if (flags.includes('--seed')) {
   await page.click('text=Set parent PIN');
@@ -50,10 +60,10 @@ if (flags.includes('--seed')) {
     const fd = new FormData(); fd.append('photo', blob, 'p.jpg'); fd.append('thumb', blob.size < 300000 ? blob : await new Promise((r) => { const s = document.createElement('canvas'); s.width = 480; s.height = 320; s.getContext('2d').drawImage(c, 0, 0, 480, 320); s.toBlob(r, 'image/jpeg', 0.7); }), 't.jpg'); fd.append('w', 2400); fd.append('h', 1600);
     const r = await fetch('/api/photos', { method: 'POST', headers: { 'x-wc': '1' }, body: fd }); if (!r.ok) throw new Error('photo ' + r.status + ' ' + await r.text());
   });
-  await page.click('#lockbtn'); // lock parent mode for kid-view tests
+  await setLock(true); // lock parent mode for kid-view tests
 } else if (await page.isVisible('text=Enter PIN')) {
   await page.click('text=Enter PIN'); await typePin(PIN); await page.waitForSelector('.rail');
-  await page.click('#lockbtn');
+  await setLock(true);
 }
 await page.goto(base + '/#home'); await page.reload(); await page.waitForSelector('.kidcard', { timeout: 15000 }); await page.waitForTimeout(2500);
 await page.screenshot({ path: `${out}-home-1920.png` });
@@ -71,9 +81,9 @@ console.log('settings locked:', await page.isVisible('.lockbar'));
 await page.goto(base + '/#photos'); await page.waitForTimeout(700);
 if (await page.isVisible('text=▶ Slideshow')) { await page.click('text=▶ Slideshow'); await page.waitForTimeout(2500); await page.screenshot({ path: `${out}-slideshow-1920.png` }); }
 if (await page.isVisible('#slideshow')) { await page.mouse.click(900, 500); await page.waitForTimeout(400); }
-await page.click('#lockbtn'); await typePin(PIN); await page.waitForTimeout(500);
+await setLock(false);
 await page.goto(base + '/#settings'); await page.waitForSelector('.settings'); await page.waitForTimeout(500); await page.screenshot({ path: `${out}-settings-parent-1920.png` });
-await page.click('#lockbtn'); await page.waitForTimeout(500);
+await setLock(true);
 // phone
 const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, timezoneId: 'America/Chicago', storageState: await ctx.storageState() });
 const pp = await phone.newPage(); pp.on('pageerror', (e) => errors.push('phone pageerror: ' + e.message));
