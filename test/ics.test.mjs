@@ -119,3 +119,12 @@ test('rrule parser', () => {
   assert.equal(r.interval, 2); assert.equal(r.wkst, 0);
   assert.deepEqual(r.byday, [{ n: -1, wd: 5 }, { n: 2, wd: 1 }]);
 });
+
+test('a feed over the event cap keeps every series near today', () => {
+  const series = Array.from({ length: 10 }, (_, i) => ev([`UID:d${i}`, `DTSTART;TZID=America/Chicago:20260101T${String(8 + i).padStart(2, '0')}0000`, 'DURATION:PT30M', 'RRULE:FREQ=DAILY', `SUMMARY:Daily ${i}`]));
+  const now = Date.parse('2026-11-01T17:00:00Z');
+  const out = expandIcs(cal(...series), { fromMs: now - 45 * 86400e3, toMs: now + 400 * 86400e3, tz: TZ, max: 4000 });
+  assert.equal(out.length, 4000);
+  const week = new Set(out.filter((e) => e.start >= now && e.start < now + 7 * 86400e3).map((e) => e.uid));
+  assert.equal(week.size, 10, 'the last series in the feed is still shown this week');
+});

@@ -277,6 +277,7 @@ export function expandIcs(text, { fromMs, toMs: endMs, tz = 'America/Chicago', m
         if (u) { if (u.allDay || st.allDay) untilDay = dayNum(u.y, u.m, u.d); else untilMs = u.tz === 'UTC' ? toMs(u) : toMs({ ...u, tz: st.tz }); }
       }
       let count = 0, guard = 0;
+      const base = out.length; // cap per series, so one busy series can't crowd out the rest of the feed
       const sDayN = dayNum(st.y, st.m, st.d);
       const first = { n: sDayN };
       const gen = ruleDays(rule, st, fromDay);
@@ -300,7 +301,7 @@ export function expandIcs(text, { fromMs, toMs: endMs, tz = 'America/Chicago', m
           if (rule.count != null && count > rule.count) break;
           if (item.n < fromDay - 400 && rule.count == null) continue;
           emit(inst);
-          if (out.length > max) break;
+          if (out.length - base > max) break;
         }
       } else emit(st);
     } else emit(st);
