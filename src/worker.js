@@ -421,7 +421,7 @@ async function api(req, env, ctx, url) {
   if (pm && m === 'POST') {
     const c = await first(db, 'SELECT * FROM completions WHERE id = ?', +pm[1]);
     if (!c) return err(404, 'Not found');
-    if (pm[2] === 'reject') { await run(db, 'DELETE FROM completions WHERE id = ?', c.id); return json({ ok: true }); }
+    if (pm[2] === 'reject') { await db.batch([db.prepare('DELETE FROM ledger WHERE completion_id = ?').bind(c.id), db.prepare('DELETE FROM completions WHERE id = ?').bind(c.id)]); return json({ ok: true }); }
     if (c.status === 'done') return json({ ok: true });
     const t = await first(db, 'SELECT title FROM tasks WHERE id = ?', c.task_id);
     const now = Date.now();
