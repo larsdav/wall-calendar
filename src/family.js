@@ -21,7 +21,7 @@ export function cleanFamilyEvent(b, personIds) {
     start = b.start_time;
     end = TIME_RE.test(b.end_time || '') ? b.end_time : addMinutes(start, 60);
     endDate = b.date;
-    if (end <= start) endDate = dayKeyFromNum(numFromKey(b.date) + 1); // runs past midnight
+    if (end < start) endDate = dayKeyFromNum(numFromKey(b.date) + 1); // runs past midnight
   }
   const repeat = REPEATS.includes(b.repeat) ? b.repeat : 'none';
   let until = repeat !== 'none' && b.until && parseDayKey(b.until) ? b.until : '';

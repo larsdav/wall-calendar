@@ -794,7 +794,7 @@ function editFamilyEvent(ev, day) {
   let timeBox, endBox, untilBox;
   const syncVis = () => { timeBox.hidden = f.all_day; endBox.hidden = !f.all_day; untilBox.hidden = f.repeat === 'none'; };
   const dateIn = (key, attrs = {}) => h('input', { type: 'date', value: f[key], ...attrs, onchange: (e) => { f[key] = e.target.value; if (key === 'date' && f.end_date < f.date) { f.end_date = f.date; endIn.value = f.date; } } });
-  const timeIn = (key) => h('input', { type: 'time', value: f[key], step: 300, onchange: (e) => { f[key] = e.target.value; if (key === 'start_time' && f.end_time && f.end_time <= f.start_time) { const [hh, mm] = f.start_time.split(':').map(Number); f.end_time = `${String(Math.min(hh + 1, 23)).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; endTimeIn.value = f.end_time; } } });
+  const timeIn = (key) => h('input', { type: 'time', value: f[key], step: 300, onchange: (e) => { f[key] = e.target.value; if (key === 'start_time' && f.end_time && f.end_time <= f.start_time) { const [hh, mm] = f.start_time.split(':').map(Number); const t = Math.min(hh * 60 + mm + 60, 23 * 60 + 59); f.end_time = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; endTimeIn.value = f.end_time; } } });
   const endIn = dateIn('end_date'), endTimeIn = timeIn('end_time');
   formSheet(ev ? 'Edit event' : 'New family event', () => {
     const allDay = toggleInput(f, 'all_day', 'All day');

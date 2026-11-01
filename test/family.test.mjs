@@ -15,6 +15,9 @@ test('cleanFamilyEvent validates and fills defaults', () => {
   assert.deepEqual([t.title, t.end_time, t.end_date, t.all_day], ['Soccer', '18:30', '2026-10-30', 0]);
   const late = cleanFamilyEvent({ title: 'Late', date: '2026-10-30', start_time: '22:00', end_time: '01:00' }, []).value;
   assert.equal(late.end_date, '2026-10-31');
+  const eleven = cleanFamilyEvent({ title: 'Late', date: '2026-10-30', start_time: '23:00', end_time: '23:00' }, []).value;
+  assert.deepEqual([eleven.end_date, eleven.end_time], ['2026-10-30', '23:00'], 'same start and end is not a 24-hour event');
+  assert.equal(cleanFamilyEvent({ title: 'Late', date: '2026-10-30', start_time: '23:59' }, []).value.end_date, '2026-10-30');
   const ad = cleanFamilyEvent({ title: 'Trip', date: '2026-11-02', end_date: '2026-11-05', all_day: true, start_time: '09:00' }, []).value;
   assert.deepEqual([ad.all_day, ad.end_date, ad.start_time], [1, '2026-11-05', '']);
   assert.equal(cleanFamilyEvent({ title: 'A', date: '2026-11-02', end_date: '2026-11-01', all_day: true }, []).error, 'The end is before the start');
