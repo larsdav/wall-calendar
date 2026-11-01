@@ -1,6 +1,6 @@
 // Family wall calendar — front end (vanilla JS, no build step).
 import { dayNum, fromDayNum, weekday, ymd, numFromKey, dayKeyFromNum, partsInTz } from './lib/tz.js';
-import { todayBoard, upcomingCountdowns } from './lib/logic.js';
+import { todayBoard, upcomingCountdowns, photoSrc } from './lib/logic.js';
 
 // ---------------- tiny DOM helper ----------------
 function h(tag, attrs, ...kids) {
@@ -379,7 +379,7 @@ function startSlideshow(list, startAt) {
   const show = () => {
     const ps = photos.filter((p) => S.state.photos.includes(p) || S.state.photos.some((x) => x.id === p.id)); if (!ps.length) return stopSlideshow();
     slideIdx = (slideIdx + 1) % ps.length;
-    const src = `/api/photos/${ps[slideIdx].id}`;
+    const src = photoSrc(ps[slideIdx]);
     const img = which ? fg2 : fg, other = which ? fg : fg2; which = 1 - which;
     img.onload = () => { img.classList.add('on'); other.classList.remove('on'); bg.src = src; bg.classList.add('on'); };
     img.src = src;
@@ -1071,7 +1071,7 @@ function photosView() {
     h('button', { class: 'add', onclick: async () => { if (await needParent()) editAlbum(null); } }, '+ New album')));
   if (!shown.length) out.append(h('div', { class: 'card empty-state' }, h('div', { class: 'big' }, '📷'), h('p', null, album ? `No photos in ${album.name} yet. Add new ones here, or tag existing photos with 🏷 on All photos.` : 'Add family photos from a phone or computer. They show as a slideshow when the screen is idle.')));
   else out.append(h('div', { class: 'photos-grid' }, shown.map((p, i) => h('div', { class: 'ph' },
-    h('img', { src: `/api/photos/${p.id}/thumb`, loading: 'lazy', alt: p.caption || 'Family photo', onclick: () => startSlideshow(shown, i) }),
+    h('img', { src: photoSrc(p, true), loading: 'lazy', alt: p.caption || 'Family photo', onclick: () => startSlideshow(shown, i) }),
     albumIdsOf(p.id).length ? h('div', { class: 'tags' }, albumIdsOf(p.id).map((id) => (albums.find((a) => a.id === id) || {}).emoji).filter(Boolean).join(' ')) : null,
     S.status.parent ? h('div', { class: 'tools' },
       albums.length ? h('button', { 'aria-label': 'Albums for this photo', onclick: () => photoAlbums(p) }, '🏷') : null,
@@ -1101,7 +1101,7 @@ function editAlbum(a) {
 }
 function photoAlbums(p) {
   const f = { ids: albumIdsOf(p.id) };
-  formSheet('Albums for this photo', () => h('div', null, h('img', { src: `/api/photos/${p.id}/thumb`, alt: '', style: { maxHeight: '10rem', borderRadius: '12px', display: 'block', marginBottom: '1rem' } }),
+  formSheet('Albums for this photo', () => h('div', null, h('img', { src: photoSrc(p, true), alt: '', style: { maxHeight: '10rem', borderRadius: '12px', display: 'block', marginBottom: '1rem' } }),
     field('In albums', chipsInput(f, 'ids', S.state.albums.map((a) => ({ value: a.id, label: a.name, emoji: a.emoji })), { multi: true }))), {
     onSave: async () => { await api('PUT', `/photos/${p.id}/albums`, { album_ids: f.ids }); toast('Saved'); },
   });

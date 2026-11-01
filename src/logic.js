@@ -226,3 +226,7 @@ export function cleanCountdown(b, personIds) {
   return { countdown: c };
 }
 export function cleanIds(a, valid, max = 50) { return Array.isArray(a) ? [...new Set(a.map(Number).filter((x) => valid.includes(x)))].slice(0, max) : []; }
+
+// ---- photos ----
+/** Image URL for a photo. Ids can be reused after a delete and images are cached as immutable, so the URL carries created_at. */
+export const photoSrc = (p, thumb) => `/api/photos/${p.id}${thumb ? '/thumb' : ''}?v=${p.created_at}`;

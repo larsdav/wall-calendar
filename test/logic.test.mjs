@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isDue, todayBoard, balances, rewardProgress, checkRedeem, streak, cleanTask, cleanReward } from '../src/logic.js';
+import { isDue, todayBoard, balances, rewardProgress, checkRedeem, streak, cleanTask, cleanReward, photoSrc } from '../src/logic.js';
 
 const kids = [{ id: 1, name: 'A' }, { id: 2, name: 'B' }];
 const bedtime = { id: 10, title: 'Bedtime', recur: 'daily', stars: 1, assignees: [1, 2], active: 1 };
@@ -87,4 +87,11 @@ test('task and reward validation', () => {
   assert.deepEqual([ok.task.title, ok.task.stars, ok.task.assignees], ['Bed', 1, [1]]);
   assert.match(cleanReward({ name: 'Ice cream', cost: 0 }, [], []).error, /at least 1/);
   assert.equal(cleanReward({ name: 'Movie', cost: 10, scope: 'family', task_ids: [5, 6] }, [], [5]).reward.task_ids.length, 1);
+});
+
+test('photo URLs change when a deleted photo id is reused', () => {
+  const old = { id: 7, created_at: 1790000000000 }, reused = { id: 7, created_at: 1790000999000 };
+  assert.notEqual(photoSrc(old), photoSrc(reused));
+  assert.notEqual(photoSrc(old, true), photoSrc(reused, true));
+  assert.match(photoSrc(reused, true), /^\/api\/photos\/7\/thumb\?/);
 });
