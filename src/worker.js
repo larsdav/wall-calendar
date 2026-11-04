@@ -2,7 +2,7 @@
 import { ASSETS, ASSET_VERSION } from './assets.gen.js';
 import { expandIcs, normalizeFeedUrl } from './ics.js';
 import { dayKey, validTz } from './tz.js';
-import { json, err, all, first, run, J, body } from './util.js';
+import { json, err, all, first, run, J, body, ipGroup } from './util.js';
 import { featureApi, featureState } from './features.js';
 import { expandFamily, familyIcs } from './family.js';
 import { balances, rewardProgress, checkRedeem, isDue, cleanTask, cleanReward, cleanText, cleanEmoji, cleanMealSlots, cleanIds, COLOR_RE } from './logic.js';
@@ -100,15 +100,24 @@ async function checkSession(db, token, kind) {
   return { ...row, until: row.idle_ms ? Math.min(row.expires_at, now + row.idle_ms) : row.expires_at };
 }
 
-// rate limit PIN attempts: 5 per 15 min per IP, 20 per 15 min overall
-async function limited(db, ip) {
-  const since = Date.now() - 15 * 60e3;
-  await run(db, 'DELETE FROM attempts WHERE ts < ?', since);
-  const a = await first(db, 'SELECT COUNT(*) AS n FROM attempts WHERE key = ? AND ts >= ?', ip, since);
-  const b = await first(db, 'SELECT COUNT(*) AS n FROM attempts WHERE ts >= ?', since);
-  return a.n >= 5 || b.n >= 20;
+// rate limit PIN attempts: 5 per 15 min per IP, 20 per 15 min overall.
+// The attempt is recorded and counted in one batch (a D1 transaction) BEFORE the PIN is checked. Counting first and
+// recording only after a wrong PIN let a burst of parallel requests all read the same low count and all get checked.
+// Returns { limited } plus the attempt's id, which a correct PIN clears along with this address's other attempts.
+async function recordAttempt(db, ip) {
+  const now = Date.now(), since = now - 15 * 60e3;
+  const [, ins, mine, total] = await db.batch([
+    db.prepare('DELETE FROM attempts WHERE ts < ?').bind(since),
+    db.prepare('INSERT INTO attempts (key, ts) VALUES (?, ?) RETURNING rowid AS id').bind(ip, now),
+    db.prepare('SELECT COUNT(*) AS n FROM attempts WHERE key = ? AND ts >= ?').bind(ip, since),
+    db.prepare('SELECT COUNT(*) AS n FROM attempts WHERE ts >= ?').bind(since),
+  ]);
+  const id = ins.results[0].id;
+  // both counts include this attempt; a refused attempt checks nothing, so it doesn't stretch the lockout
+  if (mine.results[0].n > 5 || total.results[0].n > 20) { await run(db, 'DELETE FROM attempts WHERE rowid = ?', id); return { limited: true }; }
+  return { limited: false, id };
 }
-const ipKey = (req) => { const ip = req.headers.get('cf-connecting-ip') || 'local'; return ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip; };
+const ipKey = (req) => ipGroup(req.headers.get('cf-connecting-ip') || 'local');
 
 // ---------- calendar sync ----------
 function feedUrlOk(u) {
@@ -218,13 +227,10 @@ async function api(req, env, ctx, url) {
   if (path === '/unlock' && m === 'POST') {
     if (!pin) return err(409, 'Set a PIN first');
     const ip = ipKey(req);
-    if (await limited(db, ip)) return err(429, 'Too many tries. Wait 15 minutes and try again.');
+    if ((await recordAttempt(db, ip)).limited) return err(429, 'Too many tries. Wait 15 minutes and try again.');
     const b = await body(req);
-    if (!validPin(b.pin) || !(await pinMatches(b.pin, pin))) {
-      await run(db, 'INSERT INTO attempts (key, ts) VALUES (?, ?)', ip, Date.now());
-      return err(401, 'Wrong PIN');
-    }
-    await run(db, 'DELETE FROM attempts WHERE key = ?', ip);
+    if (!validPin(b.pin) || !(await pinMatches(b.pin, pin))) return err(401, 'Wrong PIN'); // the attempt stays counted
+    await run(db, 'DELETE FROM attempts WHERE key = ?', ip); // right PIN: this address starts fresh
     await run(db, 'DELETE FROM sessions WHERE expires_at < ?', Date.now());
     const h = new Headers({ 'content-type': 'application/json', 'cache-control': 'no-store' });
     if (!device) h.append('set-cookie', setCookie(DEV_COOKIE, await newSession(db, 'device', DEVICE_TTL, 0), DEVICE_TTL / 1000));
